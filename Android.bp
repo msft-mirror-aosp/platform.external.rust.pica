@@ -1,0 +1,28 @@
+rust_library_host {
+    name: "libpica",
+    crate_name: "pica",
+    srcs: ["src/lib.rs"],
+    proc_macros: ["libnum_derive"],
+    rustlibs: [
+        "libanyhow",
+        "libbytes",
+        "libglam",
+        "libhex",
+        "libnum_traits",
+        "libthiserror",
+        "libserde",
+        "libtokio",
+    ],
+}
+
+rust_binary_host {
+    name: "pica",
+    srcs: ["src/bin/server/mod.rs"],
+    proc_macros: ["libnum_derive"],
+    rustlibs: [
+        "libanyhow",
+        "libpica",
+        "libclap",
+        "libtokio",
+    ],
+}
