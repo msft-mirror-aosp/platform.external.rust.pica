@@ -22,8 +22,6 @@ use std::iter::Extend;
 
 use tokio::sync::mpsc;
 
-use num_traits::FromPrimitive;
-
 use super::session::{Session, MAX_SESSION};
 
 pub const MAX_DEVICE: usize = 4;
@@ -32,8 +30,9 @@ const MAC_VERSION: u16 = 0x3001; // Version 1.3.0
 const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
 const TEST_VERSION: u16 = 0x1001; // Version 1.1
 
-// Capabilities are vendor defined, Android parses capabilities
-// according to these definitions:
+// Capabilities are vendor defined
+// Android compliant: FIRA-287 UCI_Generic_Specification controlee capabilities_r4
+// Android parses capabilities, according to these definitions:
 // /android/packages/modules/Uwb/service/java/com/android/server/uwb/config/CapabilityParam.java
 pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     // Fira params
@@ -43,13 +42,16 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::SupportedRangingMethod, &[0x1f]), // DS_TWR_NON_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_DEFERRED | SS_TWR_DEFERRED | OWR
     (CapTlvType::SupportedStsConfig, &[0x7]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
     (CapTlvType::SupportedMultiNodeModes, &[0xff]),
+    (CapTlvType::SupportedRangingTimeStruct, &[0x01]), // Block Based Scheduling (default)
+    (CapTlvType::SupportedScheduledMode, &[0x01]),     // Time scheduled ranging (default)
+    (CapTlvType::SupportedHoppingMode, &[0x00]),       // Hopping disable
     (CapTlvType::SupportedBlockStriding, &[0x1]),
     (CapTlvType::SupportedUwbInitiationTime, &[0x01]),
     (CapTlvType::SupportedChannels, &[0xff]),
     (CapTlvType::SupportedRframeConfig, &[0xff]),
+    (CapTlvType::SupportedCcConstraintLength, &[0xff]),
     (CapTlvType::SupportedBprfParameterSets, &[0xff]),
     (CapTlvType::SupportedHprfParameterSets, &[0xff]),
-    (CapTlvType::SupportedCcConstraintLength, &[0xff]),
     (CapTlvType::SupportedAoa, &[0xff]),
     (CapTlvType::SupportedAoaResultReqAntennaInterleaving, &[0x1]),
     (CapTlvType::SupportedExtendedMacAddress, &[0x1]),
@@ -74,9 +76,9 @@ pub struct Device {
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
     sessions: HashMap<u32, Session>,
-    pub tx: mpsc::Sender<UciPacketPacket>,
+    pub tx: mpsc::Sender<ControlPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
-    config: HashMap<u8, Vec<u8>>,
+    config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
 
     n_active_sessions: usize,
@@ -85,7 +87,7 @@ pub struct Device {
 impl Device {
     pub fn new(
         device_handle: usize,
-        tx: mpsc::Sender<UciPacketPacket>,
+        tx: mpsc::Sender<ControlPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
         let mac_address = {
@@ -136,10 +138,10 @@ impl Device {
 
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
-    fn command_device_reset(&mut self, cmd: DeviceResetCmdPacket) -> DeviceResetRspPacket {
+    fn command_device_reset(&mut self, cmd: DeviceResetCmd) -> DeviceResetRsp {
         let reset_config = cmd.get_reset_config();
         println!("[{}] DeviceReset", self.handle);
-        println!("  reset_config={}", reset_config);
+        println!("  reset_config={:?}", reset_config);
 
         let status = match reset_config {
             ResetConfig::UwbsReset => StatusCode::UciStatusOk,
@@ -150,7 +152,7 @@ impl Device {
         DeviceResetRspBuilder { status }.build()
     }
 
-    fn command_get_device_info(&self, _cmd: GetDeviceInfoCmdPacket) -> GetDeviceInfoRspPacket {
+    fn command_get_device_info(&self, _cmd: GetDeviceInfoCmd) -> GetDeviceInfoRsp {
         // TODO: Implement a fancy build time state machine instead of crash at runtime
         println!("[{}] GetDeviceInfo", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady);
@@ -165,13 +167,8 @@ impl Device {
         .build()
     }
 
-    pub fn command_get_caps_info(&self, cmd: GetCapsInfoCmdPacket) -> GetCapsInfoRspPacket {
+    pub fn command_get_caps_info(&self, _cmd: GetCapsInfoCmd) -> GetCapsInfoRsp {
         println!("[{}] GetCapsInfo", self.handle);
-        assert_eq!(
-            cmd.get_packet_boundary_flag(),
-            PacketBoundaryFlag::Complete,
-            "Boundary flag is true, implement fragmentation"
-        );
 
         let caps = DEFAULT_CAPS_INFO
             .iter()
@@ -188,32 +185,16 @@ impl Device {
         .build()
     }
 
-    pub fn command_set_config(&mut self, cmd: SetConfigCmdPacket) -> SetConfigRspPacket {
+    pub fn command_set_config(&mut self, cmd: SetConfigCmd) -> SetConfigRsp {
         println!("[{}] SetConfig", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
-        assert_eq!(
-            cmd.get_packet_boundary_flag(),
-            PacketBoundaryFlag::Complete,
-            "Boundary flag is true, implement fragmentation"
-        );
 
-        let (valid_parameters, invalid_config_status) = cmd.get_parameters().iter().fold(
+        let (valid_parameters, invalid_config_status) = cmd.get_tlvs().iter().fold(
             (HashMap::new(), Vec::new()),
-            |(mut valid_parameters, mut invalid_config_status), param| {
-                let id = param.id;
-                match DeviceConfigId::from_u8(id) {
-                    Some(_) => {
-                        // TODO: DeviceState is a read only parameter
-                        valid_parameters.insert(param.id, param.value.clone());
-                    }
-                    None => {
-                        // TODO: silently ignore vendor parameter
-                        invalid_config_status.push(DeviceConfigStatus {
-                            parameter_id: id,
-                            status: StatusCode::UciStatusInvalidParam,
-                        })
-                    }
-                };
+            |(mut valid_parameters, invalid_config_status), param| {
+                // TODO: DeviceState is a read only parameter
+                valid_parameters.insert(param.cfg_id, param.v.clone());
+
                 (valid_parameters, invalid_config_status)
             },
         );
@@ -225,19 +206,18 @@ impl Device {
             (StatusCode::UciStatusInvalidParam, invalid_config_status)
         };
 
-        SetConfigRspBuilder { status, parameters }.build()
+        SetConfigRspBuilder {
+            cfg_status: parameters,
+            status,
+        }
+        .build()
     }
 
-    pub fn command_get_config(&self, cmd: GetConfigCmdPacket) -> GetConfigRspPacket {
+    pub fn command_get_config(&self, cmd: GetConfigCmd) -> GetConfigRsp {
         println!("[{}] GetConfig", self.handle);
-        assert_eq!(
-            cmd.get_packet_boundary_flag(),
-            PacketBoundaryFlag::Complete,
-            "Boundary flag is true, implement fragmentation"
-        );
-        let ids = cmd.get_parameter_ids();
 
         // TODO: do this config shall be set on device reset
+        let ids = cmd.get_cfg_id();
         let (valid_parameters, invalid_parameters) = ids.iter().fold(
             (Vec::new(), Vec::new()),
             |(mut valid_parameters, mut invalid_parameters), id| {
@@ -246,15 +226,18 @@ impl Device {
                 // If the status code is ok, return the params
                 // If there is at least one invalid param, return the list of invalid params
                 // If the ID is not present in our config, return the Type with length = 0
-                match self.config.get(id) {
-                    Some(value) => valid_parameters.push(DeviceParameter {
-                        id: *id,
-                        value: value.clone(),
-                    }),
-                    None => invalid_parameters.push(DeviceParameter {
-                        id: *id,
-                        value: Vec::new(),
-                    }),
+                match DeviceConfigId::try_from(*id) {
+                    Ok(cfg_id) => match self.config.get(&cfg_id) {
+                        Some(value) => valid_parameters.push(DeviceConfigTlv {
+                            cfg_id,
+                            v: value.clone(),
+                        }),
+                        None => invalid_parameters.push(DeviceConfigTlv {
+                            cfg_id,
+                            v: Vec::new(),
+                        }),
+                    },
+                    Err(_) => println!("Failed to parse config id: {:?}", id),
                 }
 
                 (valid_parameters, invalid_parameters)
@@ -267,16 +250,20 @@ impl Device {
             (StatusCode::UciStatusInvalidParam, invalid_parameters)
         };
 
-        GetConfigRspBuilder { status, parameters }.build()
+        GetConfigRspBuilder {
+            status,
+            tlvs: parameters,
+        }
+        .build()
     }
 
-    fn command_session_init(&mut self, cmd: SessionInitCmdPacket) -> SessionInitRspPacket {
+    fn command_session_init(&mut self, cmd: SessionInitCmd) -> SessionInitRsp {
         let session_id = cmd.get_session_id();
         let session_type = cmd.get_session_type();
 
         println!("[{}] Session init", self.handle);
         println!("  session_id=0x{:x}", session_id);
-        println!("  session_type={}", session_type);
+        println!("  session_type={:?}", session_type);
 
         let status = if self.sessions.len() >= MAX_SESSION {
             StatusCode::UciStatusMaxSessionsExceeded
@@ -303,8 +290,8 @@ impl Device {
         SessionInitRspBuilder { status }.build()
     }
 
-    fn command_session_deinit(&mut self, cmd: SessionDeinitCmdPacket) -> SessionDeinitRspPacket {
-        let session_id = cmd.get_session_id();
+    fn command_session_deinit(&mut self, cmd: SessionDeinitCmd) -> SessionDeinitRsp {
+        let session_id = cmd.get_session_token();
         println!("[{}] Session deinit", self.handle);
         println!("  session_id=0x{:x}", session_id);
 
@@ -317,10 +304,7 @@ impl Device {
         SessionDeinitRspBuilder { status }.build()
     }
 
-    fn command_session_get_count(
-        &self,
-        _cmd: SessionGetCountCmdPacket,
-    ) -> SessionGetCountRspPacket {
+    fn command_session_get_count(&self, _cmd: SessionGetCountCmd) -> SessionGetCountRsp {
         println!("[{}] Session get count", self.handle);
 
         SessionGetCountRspBuilder {
@@ -332,8 +316,8 @@ impl Device {
 
     fn command_set_country_code(
         &mut self,
-        cmd: AndroidSetCountryCodeCmdPacket,
-    ) -> AndroidSetCountryCodeRspPacket {
+        cmd: AndroidSetCountryCodeCmd,
+    ) -> AndroidSetCountryCodeRsp {
         let country_code = *cmd.get_country_code();
         println!("[{}] Set country code", self.handle);
         println!("  country_code={},{}", country_code[0], country_code[1]);
@@ -347,8 +331,8 @@ impl Device {
 
     fn command_get_power_stats(
         &mut self,
-        _cmd: AndroidGetPowerStatsCmdPacket,
-    ) -> AndroidGetPowerStatsRspPacket {
+        _cmd: AndroidGetPowerStatsCmd,
+    ) -> AndroidGetPowerStatsRsp {
         println!("[{}] Get power stats", self.handle);
 
         // TODO
@@ -364,7 +348,7 @@ impl Device {
         .build()
     }
 
-    pub fn command(&mut self, cmd: UciCommandPacket) -> UciResponsePacket {
+    pub fn command(&mut self, cmd: UciCommand) -> UciResponse {
         match cmd.specialize() {
             // Handle commands for this device
             UciCommandChild::CoreCommand(core_command) => match core_command.specialize() {
@@ -376,16 +360,16 @@ impl Device {
                 _ => panic!("Unsupported core command"),
             },
             // Handle commands for session management
-            UciCommandChild::SessionCommand(session_command) => {
+            UciCommandChild::SessionConfigCommand(session_command) => {
                 // Session commands directly handled at Device level
                 match session_command.specialize() {
-                    SessionCommandChild::SessionInitCmd(cmd) => {
+                    SessionConfigCommandChild::SessionInitCmd(cmd) => {
                         return self.command_session_init(cmd).into();
                     }
-                    SessionCommandChild::SessionDeinitCmd(cmd) => {
+                    SessionConfigCommandChild::SessionDeinitCmd(cmd) => {
                         return self.command_session_deinit(cmd).into();
                     }
-                    SessionCommandChild::SessionGetCountCmd(cmd) => {
+                    SessionConfigCommandChild::SessionGetCountCmd(cmd) => {
                         return self.command_session_get_count(cmd).into();
                     }
                     _ => {}
@@ -393,11 +377,15 @@ impl Device {
 
                 // Common code for retrieving the session_id in the command
                 let session_id = match session_command.specialize() {
-                    SessionCommandChild::SessionSetAppConfigCmd(cmd) => cmd.get_session_id(),
-                    SessionCommandChild::SessionGetAppConfigCmd(cmd) => cmd.get_session_id(),
-                    SessionCommandChild::SessionGetStateCmd(cmd) => cmd.get_session_id(),
-                    SessionCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => {
-                        cmd.get_session_id()
+                    SessionConfigCommandChild::SessionSetAppConfigCmd(cmd) => {
+                        cmd.get_session_token()
+                    }
+                    SessionConfigCommandChild::SessionGetAppConfigCmd(cmd) => {
+                        cmd.get_session_token()
+                    }
+                    SessionConfigCommandChild::SessionGetStateCmd(cmd) => cmd.get_session_token(),
+                    SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => {
+                        cmd.get_session_token()
                     }
                     _ => panic!("Unsupported session command type"),
                 };
@@ -406,10 +394,10 @@ impl Device {
                     // There is a session matching the session_id in the command
                     // Pass the command through
                     match session_command.specialize() {
-                        SessionCommandChild::SessionSetAppConfigCmd(_)
-                        | SessionCommandChild::SessionGetAppConfigCmd(_)
-                        | SessionCommandChild::SessionGetStateCmd(_)
-                        | SessionCommandChild::SessionUpdateControllerMulticastListCmd(_) => {
+                        SessionConfigCommandChild::SessionSetAppConfigCmd(_)
+                        | SessionConfigCommandChild::SessionGetAppConfigCmd(_)
+                        | SessionConfigCommandChild::SessionGetStateCmd(_)
+                        | SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(_) => {
                             session.session_command(session_command).into()
                         }
                         _ => panic!("Unsupported session command"),
@@ -418,29 +406,31 @@ impl Device {
                     // There is no session matching the session_id in the command
                     let status = StatusCode::UciStatusSessionNotExist;
                     match session_command.specialize() {
-                        SessionCommandChild::SessionSetAppConfigCmd(_) => {
+                        SessionConfigCommandChild::SessionSetAppConfigCmd(_) => {
                             SessionSetAppConfigRspBuilder {
+                                cfg_status: Vec::new(),
                                 status,
-                                parameters: Vec::new(),
                             }
                             .build()
                             .into()
                         }
-                        SessionCommandChild::SessionGetAppConfigCmd(_) => {
+                        SessionConfigCommandChild::SessionGetAppConfigCmd(_) => {
                             SessionGetAppConfigRspBuilder {
                                 status,
-                                parameters: Vec::new(),
+                                tlvs: Vec::new(),
                             }
                             .build()
                             .into()
                         }
-                        SessionCommandChild::SessionGetStateCmd(_) => SessionGetStateRspBuilder {
-                            status,
-                            session_state: SessionState::SessionStateDeinit,
+                        SessionConfigCommandChild::SessionGetStateCmd(_) => {
+                            SessionGetStateRspBuilder {
+                                status,
+                                session_state: SessionState::SessionStateDeinit,
+                            }
+                            .build()
+                            .into()
                         }
-                        .build()
-                        .into(),
-                        SessionCommandChild::SessionUpdateControllerMulticastListCmd(_) => {
+                        SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(_) => {
                             SessionUpdateControllerMulticastListRspBuilder { status }
                                 .build()
                                 .into()
@@ -449,19 +439,19 @@ impl Device {
                     }
                 }
             }
-            UciCommandChild::RangingCommand(ranging_command) => {
+            UciCommandChild::SessionControlCommand(ranging_command) => {
                 let session_id = ranging_command.get_session_id();
                 if let Some(session) = self.get_session_mut(session_id) {
                     // Forward to the proper session
                     let response = session.ranging_command(ranging_command);
                     match response.specialize() {
-                        RangingResponseChild::RangeStartRsp(rsp)
+                        SessionControlResponseChild::SessionStartRsp(rsp)
                             if rsp.get_status() == StatusCode::UciStatusOk =>
                         {
                             self.n_active_sessions += 1;
                             self.set_state(DeviceState::DeviceStateActive);
                         }
-                        RangingResponseChild::RangeStopRsp(rsp)
+                        SessionControlResponseChild::SessionStopRsp(rsp)
                             if rsp.get_status() == StatusCode::UciStatusOk =>
                         {
                             assert!(self.n_active_sessions > 0);
@@ -476,14 +466,14 @@ impl Device {
                 } else {
                     let status = StatusCode::UciStatusSessionNotExist;
                     match ranging_command.specialize() {
-                        RangingCommandChild::RangeStartCmd(_) => {
-                            RangeStartRspBuilder { status }.build().into()
+                        SessionControlCommandChild::SessionStartCmd(_) => {
+                            SessionStartRspBuilder { status }.build().into()
                         }
-                        RangingCommandChild::RangeStopCmd(_) => {
-                            RangeStopRspBuilder { status }.build().into()
+                        SessionControlCommandChild::SessionStopCmd(_) => {
+                            SessionStopRspBuilder { status }.build().into()
                         }
-                        RangingCommandChild::RangeGetRangingCountCmd(_) => {
-                            RangeGetRangingCountRspBuilder { status, count: 0 }
+                        SessionControlCommandChild::SessionGetRangingCountCmd(_) => {
+                            SessionGetRangingCountRspBuilder { status, count: 0 }
                                 .build()
                                 .into()
                         }
@@ -503,9 +493,39 @@ impl Device {
                     _ => panic!("Unsupported Android command"),
                 }
             }
+            UciCommandChild::UciVendor_9_Command(vendor_command) => UciVendor_9_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
+            UciCommandChild::UciVendor_A_Command(vendor_command) => UciVendor_A_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
+            UciCommandChild::UciVendor_B_Command(vendor_command) => UciVendor_B_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
+            UciCommandChild::UciVendor_E_Command(vendor_command) => UciVendor_E_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
+            UciCommandChild::UciVendor_F_Command(vendor_command) => UciVendor_F_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
             // TODO: Handle properly without panic
             _ => UciResponseBuilder {
-                group_id: GroupId::Core,
+                gid: GroupId::Core,
                 opcode: 0,
                 payload: None,
             }

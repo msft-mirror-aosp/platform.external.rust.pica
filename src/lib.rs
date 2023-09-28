@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use anyhow::Result;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -22,8 +22,6 @@ use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
-
-use num_traits::{FromPrimitive, ToPrimitive};
 
 mod pcapng;
 
@@ -43,14 +41,15 @@ use session::MAX_SESSION;
 mod mac_address;
 pub use mac_address::MacAddress;
 
-// UCI Generic Specification v1.1.0 § 4.4
+use crate::session::RangeDataNtfConfig;
+
+/// Size of UCI packet headers.
 const HEADER_SIZE: usize = 4;
+/// Maximum size of an UCI packet payload.
 const MAX_PAYLOAD_SIZE: usize = 255;
-const MAX_PACKET_SIZE: usize = HEADER_SIZE + MAX_PAYLOAD_SIZE;
 
 struct Connection {
     socket: TcpStream,
-    buffer: BytesMut,
     pcapng_file: Option<pcapng::File>,
 }
 
@@ -58,34 +57,87 @@ impl Connection {
     fn new(socket: TcpStream, pcapng_file: Option<pcapng::File>) -> Self {
         Connection {
             socket,
-            buffer: BytesMut::with_capacity(MAX_PACKET_SIZE),
             pcapng_file,
         }
     }
 
-    async fn read(&mut self) -> Result<Option<BytesMut>> {
-        let len = self.socket.read_buf(&mut self.buffer).await?;
-        if len == 0 {
-            return Ok(None);
-        }
+    /// Read a single UCI packet from the socket. The packet is automatically
+    /// re-assembled if segmented on the UCI transport.
+    async fn read(&mut self) -> Result<Vec<u8>> {
+        let mut complete_packet = vec![0; HEADER_SIZE];
 
-        if let Some(ref mut pcapng_file) = self.pcapng_file {
-            pcapng_file
-                .write(&self.buffer, pcapng::Direction::Tx)
-                .await?
-        }
+        // Note on reassembly:
+        // For each segment of a Control Message, the
+        // header of the Control Packet SHALL contain the same MT, GID and OID
+        // values.
+        // It is correct to keep only the last header of the segmented packet.
+        loop {
+            // Read the common packet header.
+            self.socket
+                .read_exact(&mut complete_packet[0..HEADER_SIZE])
+                .await?;
+            let header = PacketHeader::parse(&complete_packet[0..HEADER_SIZE])?;
 
-        let bytes = self.buffer.split_to(self.buffer.len());
-        Ok(Some(bytes))
+            // Read the packet payload.
+            let payload_length = header.get_payload_length() as usize;
+            let mut payload_bytes = vec![0; payload_length];
+            self.socket.read_exact(&mut payload_bytes).await?;
+            complete_packet.extend(&payload_bytes);
+
+            if let Some(ref mut pcapng_file) = self.pcapng_file {
+                let mut packet_bytes = vec![];
+                packet_bytes.extend(&complete_packet[0..HEADER_SIZE]);
+                packet_bytes.extend(&payload_bytes);
+                pcapng_file
+                    .write(&packet_bytes, pcapng::Direction::Tx)
+                    .await?;
+            }
+
+            // Check the Packet Boundary Flag.
+            match header.get_pbf() {
+                PacketBoundaryFlag::Complete => return Ok(complete_packet),
+                PacketBoundaryFlag::NotComplete => (),
+            }
+        }
     }
 
-    async fn write(&mut self, packet: Bytes) -> Result<()> {
-        if let Some(ref mut pcapng_file) = self.pcapng_file {
-            pcapng_file.write(&packet, pcapng::Direction::Rx).await?
-        }
+    /// Write a single UCI packet to the writer. The packet is automatically
+    /// segmented if the payload exceeds the maximum size limit.
+    async fn write(&mut self, mut packet: &[u8]) -> Result<()> {
+        let mut header_bytes = [packet[0], packet[1], packet[2], 0];
+        packet = &packet[HEADER_SIZE..];
 
-        let _ = self.socket.try_write(&packet)?;
-        Ok(())
+        loop {
+            // Update header with framing information.
+            let chunk_length = std::cmp::min(MAX_PAYLOAD_SIZE, packet.len());
+            let pbf = if chunk_length < packet.len() {
+                PacketBoundaryFlag::NotComplete
+            } else {
+                PacketBoundaryFlag::Complete
+            };
+            const PBF_MASK: u8 = 0x10;
+            header_bytes[0] &= !PBF_MASK;
+            header_bytes[0] |= (pbf as u8) << 4;
+            header_bytes[3] = chunk_length as u8;
+
+            if let Some(ref mut pcapng_file) = self.pcapng_file {
+                let mut packet_bytes = vec![];
+                packet_bytes.extend(&header_bytes);
+                packet_bytes.extend(&packet[..chunk_length]);
+                pcapng_file
+                    .write(&packet_bytes, pcapng::Direction::Rx)
+                    .await?
+            }
+
+            // Write the header and payload segment bytes.
+            self.socket.try_write(&header_bytes)?;
+            self.socket.try_write(&packet[..chunk_length])?;
+            packet = &packet[chunk_length..];
+
+            if packet.is_empty() {
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -108,7 +160,7 @@ pub enum PicaCommand {
     // Execute ranging command for selected device and session.
     Ranging(usize, u32),
     // Execute UCI command received for selected device.
-    Command(usize, UciCommandPacket),
+    Command(usize, UciCommand),
     // Init Uci Device
     InitUciDevice(MacAddress, Position, oneshot::Sender<PicaCommandStatus>),
     // Set Position
@@ -195,7 +247,7 @@ pub struct Pica {
 
 /// Result of UCI packet parsing.
 enum UciParseResult {
-    Ok(UciCommandPacket),
+    Ok(UciCommand),
     Err(Bytes),
     Skip,
 }
@@ -203,7 +255,7 @@ enum UciParseResult {
 /// Parse incoming UCI packets.
 /// Handle parsing errors by crafting a suitable error response packet.
 fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
-    match UciPacketPacket::parse(bytes) {
+    match ControlPacket::parse(bytes) {
         // Parsing error. Determine what error response should be
         // returned to the host:
         // - response and notifications are ignored, no response
@@ -218,21 +270,21 @@ fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
             let opcode_id = bytes[1] & 0x3f;
 
             let status = match (
-                MessageType::from_u8(message_type),
-                GroupId::from_u8(group_id),
+                MessageType::try_from(message_type),
+                GroupId::try_from(group_id),
             ) {
-                (Some(MessageType::Command), Some(_)) => UciStatusCode::UciStatusUnknownOid,
-                (Some(MessageType::Command), None) => UciStatusCode::UciStatusUnknownGid,
+                (Ok(MessageType::Command), Ok(_)) => UciStatusCode::UciStatusUnknownOid,
+                (Ok(MessageType::Command), Err(_)) => UciStatusCode::UciStatusUnknownGid,
                 _ => return UciParseResult::Skip,
             };
             // The PDL generated code cannot be used to generate
             // responses with invalid group identifiers.
             let response = vec![
-                (MessageType::Response.to_u8().unwrap() << 5) | group_id,
+                (u8::from(MessageType::Response) << 5) | group_id,
                 opcode_id,
                 0,
                 1,
-                status.to_u8().unwrap(),
+                status.into(),
             ];
             UciParseResult::Err(response.into())
         }
@@ -339,20 +391,20 @@ impl Pica {
                     // Run associated command.
                     result = connection.read() =>
                         match result {
-                            Ok(Some(packet)) =>
+                            Ok(packet) =>
                                 match parse_uci_packet(&packet) {
                                     UciParseResult::Ok(cmd) =>
                                         pica_tx.send(PicaCommand::Command(device_handle, cmd)).await.unwrap(),
                                     UciParseResult::Err(response) =>
-                                        connection.write(response).await.unwrap(),
+                                        connection.write(&response).await.unwrap(),
                                     UciParseResult::Skip => (),
                                 },
-                            Ok(None) | Err(_) => break 'outer
+                            Err(_) => break 'outer
                         },
 
                     // Send response packets to the connected UWB host.
                     Some(packet) = packet_rx.recv() =>
-                        if connection.write(packet.to_bytes()).await.is_err() {
+                        if connection.write(&packet.to_bytes()).await.is_err() {
                             break 'outer
                         }
                 }
@@ -422,50 +474,46 @@ impl Pica {
                                 aoa_destination_elevation: remote.2 as u16,
                                 aoa_destination_elevation_fom: 100,
                                 slot_index: 0,
+                                rssi: u8::MAX,
                             })
                         }
                         MacAddress::Extend(_) => unimplemented!(),
                     }
                 }
             });
+        if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {
+            device
+                .tx
+                .send(
+                    // TODO: support extended address
+                    ShortMacTwoWaySessionInfoNtfBuilder {
+                        sequence_number: session.sequence_number,
+                        session_token: session_id,
+                        rcr_indicator: 0,            //TODO
+                        current_ranging_interval: 0, //TODO
+                        two_way_ranging_measurements: measurements,
+                        vendor_data: vec![],
+                    }
+                    .build()
+                    .into(),
+                )
+                .await
+                .unwrap();
 
-        device
-            .tx
-            .send(
-                // TODO: support extended address
-                ShortMacTwoWayRangeDataNtfBuilder {
-                    sequence_number: session.sequence_number,
-                    session_id,
-                    rcr_indicator: 0,            //TODO
-                    current_ranging_interval: 0, //TODO
-                    two_way_ranging_measurements: measurements,
-                }
-                .build()
-                .into(),
-            )
-            .await
-            .unwrap();
+            let device = self.get_device_mut(device_handle).unwrap();
+            let session = device.get_session_mut(session_id).unwrap();
 
-        let device = self.get_device_mut(device_handle).unwrap();
-        let session = device.get_session_mut(session_id).unwrap();
-
-        session.sequence_number += 1;
+            session.sequence_number += 1;
+        }
     }
 
-    async fn command(&mut self, device_handle: usize, cmd: UciCommandPacket) {
-        // TODO: implement fragmentation support
-        assert_eq!(
-            cmd.get_packet_boundary_flag(),
-            PacketBoundaryFlag::Complete,
-            "Boundary flag is true, implement fragmentation"
-        );
-
+    async fn command(&mut self, device_handle: usize, cmd: UciCommand) {
         match self
             .get_device_mut(device_handle)
             .ok_or_else(|| PicaCommandError::DeviceNotFound(device_handle.into()))
         {
             Ok(device) => {
-                let response = device.command(cmd).into();
+                let response: ControlPacket = device.command(cmd).into();
                 device
                     .tx
                     .send(response)
