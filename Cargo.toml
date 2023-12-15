@@ -1,13 +1,25 @@
 [package]
 name = "pica"
+version = "0.1.3"
+edition = "2021"
+description = "Pica is a virtual UWB Controller implementing the FiRa UCI specification."
+repository = "https://github.com/google/pica"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["uwb", "virtual", "emulator", "controller"]
+categories = ["emulators", "virtualization"]
 authors = [
   "Adrien Larbanet",
-  "Charlie Boutier",
-  "David Duarte",
-  "Henri Chataing",
+  "Charlie Boutier <charliebout@google.com>",
+  "David De Jesus Duarte <licorne@google.com>",
+  "Henri Chataing <henrichataing@google.com>",
 ]
-version = "0.1.2"
-edition = "2021"
+default-run = "pica-server"
+exclude = [
+  "res/*",
+  "scripts/*"
+]
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,21 +28,25 @@ name = "pica"
 path = "src/lib.rs"
 
 [[bin]]
-name = "server"
+name = "pica-server"
 path = "src/bin/server/mod.rs"
 
 [features]
 default = ["web"]
 web = ["hyper", "tokio/rt-multi-thread"]
 
+[build-dependencies]
+pdl-compiler = "0.2.3"
+
 [dependencies]
 tokio = { version = "1.25.0", features = [ "fs", "io-util", "macros", "net", "rt" ] }
 tokio-stream = { version = "0.1.8", features = ["sync"] }
 bytes = "1"
 anyhow = "1.0.56"
-num-derive = "*"
-num-traits = "*"
-thiserror = "*"
+num-derive = "0.4.1"
+num-traits = "0.2.17"
+pdl-runtime = "0.2.3"
+thiserror = "1.0.49"
 glam = "0.23.0"
 hyper = { version = "0.14", features = ["server", "stream", "http1", "tcp"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
