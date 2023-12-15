@@ -12,15 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::packets::uci::*;
 use crate::position::Position;
-use crate::uci_packets::*;
 use crate::MacAddress;
 use crate::PicaCommand;
 
 use std::collections::HashMap;
 use std::iter::Extend;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio::time;
 
 use super::session::{Session, MAX_SESSION};
 
@@ -81,7 +83,7 @@ pub struct Device {
     config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
 
-    n_active_sessions: usize,
+    pub n_active_sessions: usize,
 }
 
 impl Device {
@@ -108,7 +110,7 @@ impl Device {
         }
     }
 
-    fn set_state(&mut self, device_state: DeviceState) {
+    pub fn set_state(&mut self, device_state: DeviceState) {
         // No transition: ignore
         if device_state == self.state {
             return;
@@ -118,6 +120,7 @@ impl Device {
         self.state = device_state;
         let tx = self.tx.clone();
         tokio::spawn(async move {
+            time::sleep(Duration::from_millis(5)).await;
             tx.send(DeviceStatusNtfBuilder { device_state }.build().into())
                 .await
                 .unwrap()
@@ -146,8 +149,8 @@ impl Device {
         let status = match reset_config {
             ResetConfig::UwbsReset => StatusCode::UciStatusOk,
         };
-
         *self = Device::new(self.handle, self.tx.clone(), self.pica_tx.clone());
+        self.init();
 
         DeviceResetRspBuilder { status }.build()
     }
@@ -200,7 +203,7 @@ impl Device {
         );
 
         let (status, parameters) = if invalid_config_status.is_empty() {
-            self.config.extend(valid_parameters.into_iter());
+            self.config.extend(valid_parameters);
             (StatusCode::UciStatusOk, Vec::new())
         } else {
             (StatusCode::UciStatusInvalidParam, invalid_config_status)
@@ -295,12 +298,19 @@ impl Device {
         println!("[{}] Session deinit", self.handle);
         println!("  session_id=0x{:x}", session_id);
 
-        let status = if self.sessions.remove(&session_id).is_some() {
-            StatusCode::UciStatusOk
-        } else {
-            StatusCode::UciStatusSessionNotExist
+        let status = match self.sessions.get_mut(&session_id) {
+            Some(session) => {
+                if session.state == SessionState::SessionStateActive {
+                    self.n_active_sessions -= 1;
+                    if self.n_active_sessions == 0 {
+                        self.set_state(DeviceState::DeviceStateReady);
+                    }
+                }
+                self.sessions.remove(&session_id);
+                StatusCode::UciStatusOk
+            }
+            None => StatusCode::UciStatusSessionNotExist,
         };
-
         SessionDeinitRspBuilder { status }.build()
     }
 
