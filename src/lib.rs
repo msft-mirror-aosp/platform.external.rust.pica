@@ -14,6 +14,7 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use pdl_runtime::Packet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -28,15 +29,16 @@ mod pcapng;
 mod position;
 pub use position::Position;
 
-mod uci_packets;
-use uci_packets::StatusCode as UciStatusCode;
-use uci_packets::*;
+mod packets;
+
+use packets::uci::StatusCode as UciStatusCode;
+use packets::uci::*;
 
 mod device;
 use device::{Device, MAX_DEVICE};
 
 mod session;
-use session::MAX_SESSION;
+use session::{AppConfig, MAX_SESSION};
 
 mod mac_address;
 pub use mac_address::MacAddress;
@@ -159,6 +161,8 @@ pub enum PicaCommand {
     Disconnect(usize),
     // Execute ranging command for selected device and session.
     Ranging(usize, u32),
+    // Send an in-band request to stop ranging to a peer controlee identified by address and session id.
+    StopRanging(MacAddress, u32),
     // Execute UCI command received for selected device.
     Command(usize, UciCommand),
     // Init Uci Device
@@ -179,6 +183,7 @@ impl Display for PicaCommand {
             PicaCommand::Connect(_) => "Connect",
             PicaCommand::Disconnect(_) => "Disconnect",
             PicaCommand::Ranging(_, _) => "Ranging",
+            PicaCommand::StopRanging(_, _) => "StopRanging",
             PicaCommand::Command(_, _) => "Command",
             PicaCommand::InitUciDevice(_, _, _) => "InitUciDevice",
             PicaCommand::SetPosition(_, _, _) => "SetPosition",
@@ -300,6 +305,33 @@ fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
     }
 }
 
+fn make_measurement(
+    mac_address: &MacAddress,
+    local: (u16, i16, i8),
+    remote: (u16, i16, i8),
+) -> ShortAddressTwoWayRangingMeasurement {
+    if let MacAddress::Short(address) = mac_address {
+        ShortAddressTwoWayRangingMeasurement {
+            mac_address: u16::from_le_bytes(*address),
+            status: UciStatusCode::UciStatusOk,
+            nlos: 0, // in Line Of Sight
+            distance: local.0,
+            aoa_azimuth: local.1 as u16,
+            aoa_azimuth_fom: 100, // Yup, pretty sure about this
+            aoa_elevation: local.2 as u16,
+            aoa_elevation_fom: 100, // Yup, pretty sure about this
+            aoa_destination_azimuth: remote.1 as u16,
+            aoa_destination_azimuth_fom: 100,
+            aoa_destination_elevation: remote.2 as u16,
+            aoa_destination_elevation_fom: 100,
+            slot_index: 0,
+            rssi: u8::MAX,
+        }
+    } else {
+        panic!("Extended address is not supported.")
+    }
+}
+
 impl Pica {
     pub fn new(event_tx: broadcast::Sender<PicaEvent>, pcapng_dir: Option<PathBuf>) -> Self {
         let (tx, rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
@@ -344,6 +376,38 @@ impl Pica {
         self.devices
             .values_mut()
             .find(|d| d.mac_address == mac_address)
+    }
+
+    fn get_device_by_mac(
+        &self,
+        mac_address: &MacAddress,
+        local_app_config: &AppConfig,
+        session_id: u32,
+    ) -> Option<&Device> {
+        self.devices.values().find(|device| {
+            if let Some(session) = device.get_session(session_id) {
+                session.app_config.device_mac_address == *mac_address
+                    && local_app_config.can_start_ranging_with_peer(&session.app_config)
+                    && session.session_state() == SessionState::SessionStateActive
+            } else {
+                false
+            }
+        })
+    }
+
+    fn get_device_mut_by_mac_and_session_id(
+        &mut self,
+        mac_address: &MacAddress,
+        session_id: u32,
+    ) -> Option<&mut Device> {
+        self.devices.values_mut().find(|device| {
+            if let Some(session) = device.get_session(session_id) {
+                session.app_config.device_mac_address == *mac_address
+                    && session.session_state() == SessionState::SessionStateActive
+            } else {
+                false
+            }
+        })
     }
 
     fn send_event(&self, event: PicaEvent) {
@@ -456,29 +520,20 @@ impl Pica {
                         .compute_range_azimuth_elevation(&device.position);
 
                     assert!(local.0 == remote.0);
+                    measurements.push(make_measurement(mac_address, local, remote));
+                }
+                if let Some(peer_device) =
+                    self.get_device_by_mac(mac_address, &session.app_config, session_id)
+                {
+                    let local: (u16, i16, i8) = device
+                        .position
+                        .compute_range_azimuth_elevation(&peer_device.position);
+                    let remote = peer_device
+                        .position
+                        .compute_range_azimuth_elevation(&device.position);
 
-                    // TODO: support extended address
-                    match mac_address {
-                        MacAddress::Short(address) => {
-                            measurements.push(ShortAddressTwoWayRangingMeasurement {
-                                mac_address: u16::from_be_bytes(*address),
-                                status: UciStatusCode::UciStatusOk,
-                                nlos: 0, // in Line Of Sight
-                                distance: local.0,
-                                aoa_azimuth: local.1 as u16,
-                                aoa_azimuth_fom: 100, // Yup, pretty sure about this
-                                aoa_elevation: local.2 as u16,
-                                aoa_elevation_fom: 100, // Yup, pretty sure about this
-                                aoa_destination_azimuth: remote.1 as u16,
-                                aoa_destination_azimuth_fom: 100,
-                                aoa_destination_elevation: remote.2 as u16,
-                                aoa_destination_elevation_fom: 100,
-                                slot_index: 0,
-                                rssi: u8::MAX,
-                            })
-                        }
-                        MacAddress::Extend(_) => unimplemented!(),
-                    }
+                    assert!(local.0 == remote.0);
+                    measurements.push(make_measurement(mac_address, local, remote));
                 }
             });
         if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {
@@ -535,6 +590,9 @@ impl Pica {
                 Some(Ranging(device_handle, session_id)) => {
                     self.ranging(device_handle, session_id).await;
                 }
+                Some(StopRanging(mac_address, session_id)) => {
+                    self.stop_controlee_ranging(&mac_address, session_id).await;
+                }
                 Some(Command(device_handle, cmd)) => self.command(device_handle, cmd).await,
                 Some(SetPosition(mac_address, position, pica_cmd_rsp_tx)) => {
                     self.set_position(mac_address, position, pica_cmd_rsp_tx)
@@ -551,6 +609,24 @@ impl Pica {
                 }
                 None => (),
             };
+        }
+    }
+
+    // Handle the in-band StopRanging command sent from controller to the controlee with
+    // corresponding mac_address and session_id.
+    async fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
+        if let Some(device) = self.get_device_mut_by_mac_and_session_id(mac_address, session_id) {
+            // If such device with target session is found, stop the ranging session.
+            let session = device.get_session_mut(session_id).unwrap();
+            session.stop_ranging_task();
+            session.set_state(
+                SessionState::SessionStateIdle,
+                ReasonCode::SessionStoppedDueToInbandSignal,
+            );
+            device.n_active_sessions -= 1;
+            if device.n_active_sessions == 0 {
+                device.set_state(DeviceState::DeviceStateReady);
+            }
         }
     }
 
