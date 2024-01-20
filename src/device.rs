@@ -27,7 +27,7 @@ use tokio::time;
 use super::session::{Session, MAX_SESSION};
 
 pub const MAX_DEVICE: usize = 4;
-const UCI_VERSION: u16 = 0x0002; // Version 2.0
+const UCI_VERSION: u16 = 0x1001; // Version 1.1.0
 const MAC_VERSION: u16 = 0x3001; // Version 1.3.0
 const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
 const TEST_VERSION: u16 = 0x1001; // Version 1.1
@@ -42,7 +42,7 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::SupportedFiraMacVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
     (CapTlvType::SupportedDeviceRoles, &[0x3]),                // INTIATOR | RESPONDER
     (CapTlvType::SupportedRangingMethod, &[0x1f]), // DS_TWR_NON_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_DEFERRED | SS_TWR_DEFERRED | OWR
-    (CapTlvType::SupportedStsConfig, &[0x1f]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY | PROVISIONED_STS | PROVISIONED_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
+    (CapTlvType::SupportedStsConfig, &[0x7]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
     (CapTlvType::SupportedMultiNodeModes, &[0xff]),
     (CapTlvType::SupportedRangingTimeStruct, &[0x01]), // Block Based Scheduling (default)
     (CapTlvType::SupportedScheduledMode, &[0x01]),     // Time scheduled ranging (default)
@@ -356,41 +356,6 @@ impl Device {
             },
         }
         .build()
-    }
-
-    pub fn data_message_snd(&mut self, data: DataPacket) -> SessionControlNotification {
-        match data.specialize() {
-            DataPacketChild::DataMessageSnd(data_msg_snd) => {
-                let session_token = data_msg_snd.get_session_handle();
-                if let Some(session) = self.get_session_mut(session_token) {
-                    session.data_message_snd(data_msg_snd)
-                } else {
-                    DataTransferStatusNtfBuilder {
-                        session_token,
-                        status: DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
-                        tx_count: 1, // TODO: support for retries?
-                        uci_sequence_number: 0,
-                    }
-                    .build()
-                    .into()
-                }
-            }
-            DataPacketChild::DataMessageRcv(data_msg_rcv) => {
-                // This function should not be passed anything besides DataMessageSnd
-                let session_token = data_msg_rcv.get_session_handle();
-                DataTransferStatusNtfBuilder {
-                    session_token,
-                    status: DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
-                    tx_count: 1, // TODO: support for retries?
-                    uci_sequence_number: 0,
-                }
-                .build()
-                .into()
-            }
-            _ => {
-                unimplemented!()
-            }
-        }
     }
 
     pub fn command(&mut self, cmd: UciCommand) -> UciResponse {
