@@ -26,19 +26,9 @@ import requests
 import struct
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import uci_packets
 
-def encode_position(x: int, y: int, z: int, yaw: int, pitch: int, roll: int) -> bytes:
-    return (struct.pack('<h', x)
-            + struct.pack('<h', y)
-            + struct.pack('<h', z)
-            + struct.pack('<h', yaw)
-            + struct.pack('<b', pitch)
-            + struct.pack('<h', roll))
-
-
-def encode_session_id(session_id: str) -> bytes:
-    return int(session_id).to_bytes(4, byteorder='little')
+from pica import Host
+from pica.packets import uci
 
 
 def encode_short_mac_address(mac_address: str) -> bytes:
@@ -49,31 +39,14 @@ def encode_mac_address(mac_address: str) -> bytes:
     return int(mac_address).to_bytes(8, byteorder='little')
 
 
-def encode_tlv(typ: int, value: bytes):
-    return bytes([typ, len(value)]) + value if len(value) > 0 else bytes([])
-
-
-class TLV:
-    def __init__(self):
-        self.count = 0
-        self.buffer = bytes()
-
-    def append(self, tag: int, value: bytes):
-        if len(value) > 0:
-            self.count += 1
-            self.buffer += encode_tlv(tag, value)
-
-    def len(self) -> int:
-        return len(self.buffer) + 1
-
-    def encode(self) -> bytes:
-        return bytes([self.count]) + self.buffer
+def parse_mac_address(mac_address: str) -> bytes:
+    bs = mac_address.split(':')
+    return bytes(int(b, 16) for b in bs)
 
 
 class Device:
     def __init__(self, reader, writer, http_address):
-        self.reader = reader
-        self.writer = writer
+        self.host = Host(reader, writer, bytes([0, 1]))
         self.http_address = http_address
 
     def pica_get_state(
@@ -146,50 +119,43 @@ class Device:
             }))
         print(f'{r.status_code}: {r.text}')
 
-    def _send_command(self, group_id: int, opcode_id: int, payload: bytes):
-        """Sends a UCI command without fragmentation"""
-        command = bytes([0x20 | group_id, opcode_id,
-                        0, len(payload)]) + payload
-        self.writer.write(command)
-
-    def raw(self,
-            group_id: str = "0",
-            opcode_id: str = "0",
-            payload_size: str = "0",
-            **kargs):
-        """Send raw commands with random payload."""
-        self._send_command(
-            int(group_id), int(opcode_id),
-            random.randbytes(int(payload_size)))
-
     def device_reset(self, **kargs):
         """Reset the UWBS."""
-        self._send_command(0, 0, bytes([0x0]))
+        self.host.send_control(uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
 
     def get_device_info(self, **kargs):
         """Retrieve the device information like (UCI version and other vendor specific info)."""
-        self._send_command(0, 2, bytes([]))
+        self.host.send_control(uci.GetDeviceInfoCmd())
 
     def get_caps_info(self, **kargs):
         """Get the capability of the UWBS."""
-        self._send_command(0, 3, bytes([]))
+        self.host.send_control(uci.GetCapsInfoCmd())
 
     def set_config(self, low_power_mode: str = '0', **kargs):
         """Set the configuration parameters on the UWBS."""
-        self._send_command(0, 4, bytes([1, 1, 1, int(low_power_mode)]))
+        self.host.send_control(uci.SetConfigCmd(tlvs=[
+            uci.DeviceConfigTlv(
+                cfg_id=uci.DeviceConfigId.LOW_POWER_MODE,
+                v=bytes([int(low_power_mode)])),
+            ]))
 
     def get_config(self, **kargs):
         """Retrieve the current configuration parameter(s) of the UWBS."""
-        self._send_command(0, 5, bytes([2, 0, 1]))
+        self.host.send_control(uci.GetConfigCmd(cfg_id=[
+            uci.DeviceConfigId.LOW_POWER_MODE,
+            uci.DeviceConfigId.DEVICE_STATE,
+        ]))
 
     def session_init(self, session_id: str = '0', **kargs):
         """Initialize the session"""
-        self._send_command(1, 0,
-                           int(session_id).to_bytes(4, byteorder='little') + bytes([0x0]))
+        self.host.send_control(uci.SessionInitCmd(
+            session_id=int(session_id),
+            session_type=uci.SessionType.FIRA_RANGING_SESSION))
 
     def session_deinit(self, session_id: str = '0', **kargs):
         """Deinitialize the session"""
-        self._send_command(1, 1, encode_session_id(session_id))
+        self.host.send_control(uci.SessionDeinitCmd(
+            session_token=int(session_id)))
 
     def session_set_app_config(
             self,
@@ -198,38 +164,48 @@ class Device:
             dst_mac_addresses: str = '',
             **kargs):
         """set APP Configuration Parameters for the requested UWB session."""
+        dst_mac_addresses = [parse_mac_address(a) for a in dst_mac_addresses.split(',') if a]
+        if any(len(a) > 2 for a in dst_mac_addresses):
+            mac_address_mode = 0x2
+            mac_address_len = 8
+        else:
+            mac_address_mode = 0x0
+            mac_address_len = 2
+
         encoded_dst_mac_addresses = bytes()
-        dst_mac_addresses_count = 0
-        for mac_address in dst_mac_addresses.split(','):
-            if len(mac_address) > 0:
-                dst_mac_addresses_count += 1
-                encoded_dst_mac_addresses += int(
-                    mac_address).to_bytes(8, byteorder='little')
+        for mac_address in dst_mac_addresses:
+            encoded_dst_mac_addresses += mac_address
+            encoded_dst_mac_addresses += b'\0' * (mac_address_len - len(mac_address))
 
-        configs = TLV()
-        configs.append(0x26, bytes([0x2]))  # MAC Address Mode #2
-        configs.append(0x5, bytes([dst_mac_addresses_count]))
-        configs.append(0x9, int(ranging_interval).to_bytes(
-            4, byteorder='little'))
-        configs.append(0x7, encoded_dst_mac_addresses)
-
-        self._send_command(1, 3,
-                           encode_session_id(session_id) +
-                           configs.encode())
+        self.host.send_control(uci.SessionSetAppConfigCmd(
+            session_token=int(session_id),
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
+                    v=bytes([mac_address_mode])),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                    v=int(ranging_interval).to_bytes(4, byteorder='little')),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.NO_OF_CONTROLEE,
+                    v=bytes([len(dst_mac_addresses)])),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                    v=encoded_dst_mac_addresses),
+            ]))
 
     def session_get_app_config(self, session_id: str = '0', **kargs):
         """retrieve the current APP Configuration Parameters of the requested UWB session."""
-        self._send_command(1, 4,
-                           encode_session_id(session_id) +
-                           bytes([1, 0x9]))
+        self.host.send_control(uci.SessionGetAppConfigCmd(
+            session_token=int(session_id), app_cfg=[0x9]))
 
     def session_get_count(self, **kargs):
         """Retrieve number of UWB sessions in the UWBS."""
-        self._send_command(1, 5, bytes([]))
+        self.host.send_control(uci.SessionGetCountCmd())
 
     def session_get_state(self, session_id: str = '0', **kargs):
         """Query the current state of the UWB session."""
-        self._send_command(1, 6, encode_session_id(session_id))
+        self.host.send_control(uci.SessionGetStateCmd(session_token=int(session_id)))
 
     def session_update_controller_multicast_list(
             self,
@@ -241,76 +217,62 @@ class Device:
         """Update the controller multicast list."""
 
         if action == 'add':
-            encoded_action = bytes([0])
+            encoded_action = uci.UpdateMulticastListAction.ADD_CONTROLEE
         elif action == 'remove':
-            encoded_action = bytes([1])
+            encoded_action = uci.UpdateMulticastListAction.REMOVE_CONTROLEE
         else:
             print(f"Unexpected action: '{action}', expected add or remove")
             return
 
-        self._send_command(1, 7,
-                           encode_session_id(session_id) +
-                           encoded_action +
-                           bytes([1]) +
-                           encode_short_mac_address(mac_address) +
-                           encode_session_id(subsession_id))
+        self.host.send_control(uci.SessionUpdateControllerMulticastListCmd(
+            session_token=int(session_id),
+            action=encoded_action,
+            payload=uci.SessionUpdateControllerMulticastListCmdPayload(
+                controlees=[
+                    uci.Controlee(
+                        short_address=encode_short_mac_address(mac_address),
+                        subsession_id=int(subsession_id),
+                    )
+                ],
+            ).serialize()))
 
     def range_start(self, session_id: str = '0', **kargs):
         """start a UWB session."""
-        self._send_command(2, 0, encode_session_id(session_id))
+        self.host.send_control(uci.SessionStartCmd(session_id=int(session_id)))
 
     def range_stop(self, session_id: str = '0', **kargs):
         """Stop a UWB session."""
-        self._send_command(2, 1, encode_session_id(session_id))
+        self.host.send_control(uci.SessionStopCmd(session_id=int(session_id)))
 
     def get_ranging_count(self, session_id: str = '0', **kargs):
         """Get the number of times ranging has been attempted during the ranging session.."""
-        self._send_command(2, 3, encode_session_id(session_id))
+        self.host.send_control(uci.SessionGetRangingCountCmd(session_id=int(session_id)))
 
     async def read_responses_and_notifications(self):
         def chunks(l, n):
             for i in range(0, len(l), n):
                 yield l[i:i + n]
 
-        packet = bytes()
-        buffer = bytes()
-        expect = 4
-        have_header = False
-
         while True:
-            chunk = await self.reader.read(expect)
+            packet = await self.host._recv_control()
 
-            # Disconnected from Pica
-            if len(chunk) == 0:
-                break
+            # Format and print raw response data
+            txt = '\n  '.join([
+                ' '.join(['{:02x}'.format(b) for b in shard]) for
+                shard in chunks(packet, 16)])
 
-            # Waiting for more bytes
-            buffer += chunk
-            if len(buffer) < expect:
-                continue
+            command_buffer = readline.get_line_buffer()
+            print('\r', end='')
+            print(f'Received UCI packet [{len(packet)}]:')
+            print(f'  {txt}')
 
-            packet += buffer
-            buffer = bytes()
-            if not have_header:
-                have_header = True
-                expect = packet[3]
-            else:
-                # Format and print raw response data
-                txt = '\n  '.join([
-                    ' '.join(['{:02x}'.format(b) for b in shard]) for
-                    shard in chunks(packet, 16)])
-
-                command_buffer = readline.get_line_buffer()
-                print('\r', end='')
-                print(f'Received UCI packet [{len(packet)}]:')
-                print(f'  {txt}')
-                uci_packet = uci_packets.UciPacket.parse_all(packet)
+            try:
+                uci_packet = uci.ControlPacket.parse_all(packet)
                 uci_packet.show()
-                print(f'--> {command_buffer}', end='', flush=True)
+            except Exception as exn:
+                pass
 
-                packet = bytes()
-                have_header = False
-                expect = 4
+            print(f'--> {command_buffer}', end='', flush=True)
 
 
 async def ainput(prompt: str = ''):
@@ -348,7 +310,6 @@ async def command_line(device: Device):
         'range_start': device.range_start,
         'range_stop': device.range_stop,
         'get_ranging_count': device.get_ranging_count,
-        'raw': device.raw,
     }
 
     def usage():
