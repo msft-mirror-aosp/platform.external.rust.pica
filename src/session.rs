@@ -16,7 +16,7 @@
 //! - [MAC] FiRa Consortium UWB MAC Technical Requirements
 //! - [UCI] FiRa Consortium UWB Command Interface Generic Technical specification
 
-use crate::packets::uci::*;
+use crate::packets::uci::{self, *};
 use crate::{MacAddress, PicaCommand};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -32,6 +32,8 @@ pub const DEFAULT_RANGING_INTERVAL: Duration = time::Duration::from_millis(200);
 pub const DEFAULT_SLOT_DURATION: u16 = 2400; // RTSU unit
 /// cf. [UCI] 8.3 Table 29
 pub const MAX_NUMBER_OF_CONTROLEES: usize = 8;
+pub const FIRA_1_1_INITIATION_TIME_SIZE: usize = 4;
+pub const FIRA_2_0_INITIATION_TIME_SIZE: usize = 8;
 
 #[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
 pub enum DeviceType {
@@ -93,6 +95,8 @@ enum MultiNodeMode {
 enum UpdateMulticastListAction {
     Add = 0x00,
     Delete = 0x01,
+    AddWithShortSubSessionKey = 0x02,
+    AddwithExtendedSubSessionKey = 0x03,
 }
 
 #[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
@@ -233,6 +237,27 @@ pub enum RangeDataNtfConfig {
     EnableAoaEdgeTrig = 0x06,
     EnableProximityAoaEdgeTrig = 0x07,
 }
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+pub enum LinkLayerMode {
+    Bypass = 0x00,
+    Assigned = 0x01,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+pub enum DataRepetitionCount {
+    NoRepetition = 0x00,
+    Infinite = 0xFF,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+pub enum SessionDataTransferStatusNtfConfig {
+    Disable = 0x00,
+    Enable = 0x01,
+}
 /// cf. [UCI] 8.3 Table 29
 #[derive(Clone)]
 pub struct AppConfig {
@@ -280,9 +305,16 @@ pub struct AppConfig {
     bprf_phr_data_rate: BprfPhrDataRate,
     max_number_of_measurements: u8,
     sts_length: StsLength,
-    uwb_initiation_time: u32,
+    uwb_initiation_time: u64,
     vendor_id: Option<Vec<u8>>,
     static_sts_iv: Option<Vec<u8>>,
+    session_key: Option<Vec<u8>>,
+    sub_session_key: Option<Vec<u8>>,
+    sub_session_id: u32,
+    link_layer_mode: LinkLayerMode,
+    data_repetition_count: DataRepetitionCount,
+    session_data_transfer_status_ntf_config: SessionDataTransferStatusNtfConfig,
+    application_data_endpoint: u8,
 }
 
 impl Default for AppConfig {
@@ -333,6 +365,13 @@ impl Default for AppConfig {
             uwb_initiation_time: 0,
             vendor_id: None,
             static_sts_iv: None,
+            session_key: None,
+            sub_session_key: None,
+            sub_session_id: 0,
+            link_layer_mode: LinkLayerMode::Bypass,
+            data_repetition_count: DataRepetitionCount::NoRepetition,
+            session_data_transfer_status_ntf_config: SessionDataTransferStatusNtfConfig::Disable,
+            application_data_endpoint: 0,
         }
     }
 }
@@ -537,7 +576,16 @@ impl AppConfig {
                 self.max_rr_retry = u16::from_le_bytes(value[..].try_into().unwrap())
             }
             AppConfigTlvType::UwbInitiationTime => {
-                self.uwb_initiation_time = u32::from_le_bytes(value[..].try_into().unwrap())
+                self.uwb_initiation_time = match value.len() {
+                    // Backward compatible with Fira 1.1 Version UCI host.
+                    FIRA_1_1_INITIATION_TIME_SIZE => {
+                        u32::from_le_bytes(value[..].try_into().unwrap()) as u64
+                    }
+                    FIRA_2_0_INITIATION_TIME_SIZE => {
+                        u64::from_le_bytes(value[..].try_into().unwrap())
+                    }
+                    _ => panic!("Invalid initiation time!"),
+                }
             }
             AppConfigTlvType::HoppingMode => {
                 self.hopping_mode = HoppingMode::from_u8(value[0]).unwrap()
@@ -558,6 +606,22 @@ impl AppConfig {
             AppConfigTlvType::InBandTerminationAttemptCount => {
                 self.in_band_termination_attempt_count = value[0]
             }
+            AppConfigTlvType::SessionKey => self.session_key = Some(value.to_vec()),
+            AppConfigTlvType::SubSessionId => {
+                self.sub_session_id = u32::from_le_bytes(value[..].try_into().unwrap())
+            }
+            AppConfigTlvType::SubsessionKey => self.sub_session_key = Some(value.to_vec()),
+            AppConfigTlvType::LinkLayerMode => {
+                self.link_layer_mode = LinkLayerMode::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::DataRepetitionCount => {
+                self.data_repetition_count = DataRepetitionCount::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::SessionDataTransferStatusNtfConfig => {
+                self.session_data_transfer_status_ntf_config =
+                    SessionDataTransferStatusNtfConfig::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::ApplicationDataEndpoint => self.application_data_endpoint = value[0],
             id => {
                 println!("Ignored AppConfig parameter {:?}", id);
                 return Err(StatusCode::UciStatusInvalidParam);
@@ -602,6 +666,48 @@ impl AppConfig {
                 };
                 invalid_parameters
             })
+    }
+}
+
+enum SubSessionKey {
+    None,
+    Short([u8; 16]),
+    Extended([u8; 32]),
+}
+struct Controlee {
+    short_address: MacAddress,
+    sub_session_id: u32,
+    #[allow(dead_code)]
+    session_key: SubSessionKey,
+}
+
+impl From<&uci::Controlee> for Controlee {
+    fn from(value: &uci::Controlee) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::None,
+        }
+    }
+}
+
+impl From<&uci::Controlee_V2_0_16_Byte_Version> for Controlee {
+    fn from(value: &uci::Controlee_V2_0_16_Byte_Version) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::Short(value.subsession_key),
+        }
+    }
+}
+
+impl From<&uci::Controlee_V2_0_32_Byte_Version> for Controlee {
+    fn from(value: &uci::Controlee_V2_0_32_Byte_Version) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::Extended(value.subsession_key),
+        }
     }
 }
 
@@ -693,7 +799,12 @@ impl Session {
             self.device_handle, self.id
         );
         assert_eq!(self.id, cmd.get_session_token());
-        assert_eq!(self.session_type, SessionType::FiraRangingSession);
+        assert!(
+            self.session_type.eq(&SessionType::FiraRangingSession)
+                || self
+                    .session_type
+                    .eq(&SessionType::FiraRangingAndInBandDataSession)
+        );
 
         if self.state == SessionState::SessionStateActive {
             const IMMUTABLE_PARAMETERS: &[AppConfigTlvType] = &[AppConfigTlvType::AoaResultReq];
@@ -810,29 +921,97 @@ impl Session {
         }
         let action = UpdateMulticastListAction::from_u8(cmd.get_action().into()).unwrap();
         let mut dst_addresses = self.app_config.dst_mac_addresses.clone();
-        let packet =
-            SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload()).unwrap();
-        let new_controlees = packet.controlees;
+        let new_controlees: Vec<Controlee> = match action {
+            UpdateMulticastListAction::Add | UpdateMulticastListAction::Delete => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload())
+                {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.into())
+                        .collect()
+                } else {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+            }
+            UpdateMulticastListAction::AddWithShortSubSessionKey => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmd_2_0_16_Byte_Payload::parse(
+                        cmd.get_payload(),
+                    )
+                {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.into())
+                        .collect()
+                } else {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+            }
+            UpdateMulticastListAction::AddwithExtendedSubSessionKey => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload::parse(
+                        cmd.get_payload(),
+                    )
+                {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.into())
+                        .collect()
+                } else {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+            }
+        };
         let mut controlee_status = Vec::new();
 
         let session_id = self.id;
         let mut status = StatusCode::UciStatusOk;
 
         match action {
-            UpdateMulticastListAction::Add => {
+            UpdateMulticastListAction::Add
+            | UpdateMulticastListAction::AddWithShortSubSessionKey
+            | UpdateMulticastListAction::AddwithExtendedSubSessionKey => {
                 new_controlees.iter().for_each(|controlee| {
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                    if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
+                    if !dst_addresses.contains(&controlee.short_address) {
                         if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
                             status = StatusCode::UciStatusMulticastListFull;
                             update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
+                        } else if (action == UpdateMulticastListAction::AddWithShortSubSessionKey
+                            || action == UpdateMulticastListAction::AddwithExtendedSubSessionKey)
+                            && self.app_config.sts_config
+                                != StsConfig::ProvisionedForControleeIndividualKey
+                        {
+                            // If Action is 0x02 or 0x03 for STS_CONFIG values other than
+                            // 0x04, the UWBS shall return SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF
+                            // with Status set to STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE for each
+                            // Controlee in the Controlee List.
+                            status = StatusCode::UciStatusFailed;
+                            update_status =
+                                MulticastUpdateStatusCode::StatusErrorSubSessionKeyNotApplicable;
                         } else {
-                            dst_addresses.push(MacAddress::Short(controlee.short_address));
+                            dst_addresses.push(controlee.short_address);
                         };
                     }
                     controlee_status.push(ControleeStatus {
-                        mac_address: controlee.short_address,
-                        subsession_id: controlee.subsession_id,
+                        mac_address: match controlee.short_address {
+                            MacAddress::Short(address) => address,
+                            MacAddress::Extend(_) => panic!("Extended address is not supported!"),
+                        },
+                        subsession_id: controlee.sub_session_id,
                         status: update_status,
                     });
                 });
@@ -843,11 +1022,11 @@ impl Session {
                     let address = controlee.short_address;
                     let attempt_count = self.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                    if !dst_addresses.contains(&MacAddress::Short(address)) {
+                    if !dst_addresses.contains(&address) {
                         status = StatusCode::UciStatusAddressNotFound;
                         update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
                     } else {
-                        dst_addresses.retain(|value| *value != MacAddress::Short(address));
+                        dst_addresses.retain(|value| *value != address);
                         // If IN_BAND_TERMINATION_ATTEMPT_COUNT is not equal to 0x00, then the
                         // UWBS shall transmit the RCM with the “Stop Ranging” bit set to ‘1’
                         // for IN_BAND_TERMINATION_ATTEMPT_COUNT times to the corresponding
@@ -856,10 +1035,7 @@ impl Session {
                             tokio::spawn(async move {
                                 for _ in 0..attempt_count {
                                     pica_tx
-                                        .send(PicaCommand::StopRanging(
-                                            MacAddress::Short(address),
-                                            session_id,
-                                        ))
+                                        .send(PicaCommand::StopRanging(address, session_id))
                                         .await
                                         .unwrap()
                                 }
@@ -867,8 +1043,11 @@ impl Session {
                         }
                     }
                     controlee_status.push(ControleeStatus {
-                        mac_address: address,
-                        subsession_id: controlee.subsession_id,
+                        mac_address: match address {
+                            MacAddress::Short(addr) => addr,
+                            MacAddress::Extend(_) => panic!("Extended address is not supported!"),
+                        },
+                        subsession_id: controlee.sub_session_id,
                         status: update_status,
                     });
                 });
@@ -1002,6 +1181,37 @@ impl Session {
             }
             _ => panic!("Unsupported ranging command"),
         }
+    }
+
+    pub fn data_message_snd(&mut self, data: DataMessageSnd) -> SessionControlNotification {
+        let session_token = data.get_session_handle();
+        let uci_sequence_number = data.get_data_sequence_number() as u8;
+
+        if self.session_type != SessionType::FiraRangingAndInBandDataSession {
+            return DataTransferStatusNtfBuilder {
+                session_token,
+                status: DataTransferNtfStatusCode::UciDataTransferStatusSessionTypeNotSupported,
+                tx_count: 1, // TODO: support for retries?
+                uci_sequence_number,
+            }
+            .build()
+            .into();
+        }
+
+        assert_eq!(self.id, session_token);
+
+        // TODO: perform actual data transfer across devices
+        println!(
+            "Data packet received, payload bytes: {:?}",
+            data.get_application_data()
+        );
+
+        DataCreditNtfBuilder {
+            credit_availability: CreditAvailability::CreditAvailable,
+            session_token,
+        }
+        .build()
+        .into()
     }
 }
 
