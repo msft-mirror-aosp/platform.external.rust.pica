@@ -1,3 +1,6 @@
+[![Crate](https://img.shields.io/crates/v/pica?style=flat-square)](https://crates.io/crates/pica)
+[![Build workflow](https://img.shields.io/github/actions/workflow/status/google/pica/build.yml?style=flat-square)](https://github.com/google/pica/actions/workflows/build.yml?query=branch%3Amain)
+
 # Pica
 
 Pica is a virtual UWB Controller implementing the FiRa UCI specification.
@@ -115,33 +118,22 @@ $> --> pica_create_anchor 00:01 # Create another one
 Pica also implements HTTP commands, the documentation is available at `http://0.0.0.0:3000/openapi`.
 The set of HTTP commands let the user interact with Pica amd modify its scene.
 
-# Regenerate uci_packets.rs
-If you haven't use bluetooth_packetgen before, it is a tool from Android. You can build it and use it
-and build it that way:
+# Tests
+
+Setup your python env:
+
 ```bash
-# Build bluetooth_packetgen
-cd $AOSP_DIR
-source build/envsetup.sh
-lunch <target>  # Use target 1 if in doubt
-m bluetooth_packetgen
-export PATH=$PATH:${AOSP_DIR}/out/host/linux-x86/bin/
-
-# Generate the source
-cd $PICA_DIR
-bluetooth_packetgen \
-    --rust \
-    --include=src/ \
-    --out=src/ \
-    src/uci_packets.pdl
+python3 -m venv venv
+source venv/bin/activate
+pip install pytest
+pip install pytest_asyncio
+pip install -e py/pica/
 ```
 
-Then edit the uci_packet.rs to add clippy guards
+Then run the tests
 
+```bash
+pytest --log-cli-level=DEBUG -v
 ```
-#![allow(clippy::all)]
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(unused)]
-#![allow(missing_docs)]
-```
+
+The tests are located in `./tests/`

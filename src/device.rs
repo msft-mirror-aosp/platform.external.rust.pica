@@ -12,20 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::packets::uci::*;
 use crate::position::Position;
-use crate::uci_packets::*;
 use crate::MacAddress;
 use crate::PicaCommand;
 
 use std::collections::HashMap;
 use std::iter::Extend;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio::time;
 
 use super::session::{Session, MAX_SESSION};
 
 pub const MAX_DEVICE: usize = 4;
-const UCI_VERSION: u16 = 0x1001; // Version 1.1.0
+const UCI_VERSION: u16 = 0x0002; // Version 2.0
 const MAC_VERSION: u16 = 0x3001; // Version 1.3.0
 const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
 const TEST_VERSION: u16 = 0x1001; // Version 1.1
@@ -40,7 +42,7 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::SupportedFiraMacVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
     (CapTlvType::SupportedDeviceRoles, &[0x3]),                // INTIATOR | RESPONDER
     (CapTlvType::SupportedRangingMethod, &[0x1f]), // DS_TWR_NON_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_DEFERRED | SS_TWR_DEFERRED | OWR
-    (CapTlvType::SupportedStsConfig, &[0x7]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
+    (CapTlvType::SupportedStsConfig, &[0x1f]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY | PROVISIONED_STS | PROVISIONED_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
     (CapTlvType::SupportedMultiNodeModes, &[0xff]),
     (CapTlvType::SupportedRangingTimeStruct, &[0x01]), // Block Based Scheduling (default)
     (CapTlvType::SupportedScheduledMode, &[0x01]),     // Time scheduled ranging (default)
@@ -81,7 +83,7 @@ pub struct Device {
     config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
 
-    n_active_sessions: usize,
+    pub n_active_sessions: usize,
 }
 
 impl Device {
@@ -108,7 +110,7 @@ impl Device {
         }
     }
 
-    fn set_state(&mut self, device_state: DeviceState) {
+    pub fn set_state(&mut self, device_state: DeviceState) {
         // No transition: ignore
         if device_state == self.state {
             return;
@@ -118,6 +120,7 @@ impl Device {
         self.state = device_state;
         let tx = self.tx.clone();
         tokio::spawn(async move {
+            time::sleep(Duration::from_millis(5)).await;
             tx.send(DeviceStatusNtfBuilder { device_state }.build().into())
                 .await
                 .unwrap()
@@ -146,8 +149,8 @@ impl Device {
         let status = match reset_config {
             ResetConfig::UwbsReset => StatusCode::UciStatusOk,
         };
-
         *self = Device::new(self.handle, self.tx.clone(), self.pica_tx.clone());
+        self.init();
 
         DeviceResetRspBuilder { status }.build()
     }
@@ -200,7 +203,7 @@ impl Device {
         );
 
         let (status, parameters) = if invalid_config_status.is_empty() {
-            self.config.extend(valid_parameters.into_iter());
+            self.config.extend(valid_parameters);
             (StatusCode::UciStatusOk, Vec::new())
         } else {
             (StatusCode::UciStatusInvalidParam, invalid_config_status)
@@ -295,12 +298,19 @@ impl Device {
         println!("[{}] Session deinit", self.handle);
         println!("  session_id=0x{:x}", session_id);
 
-        let status = if self.sessions.remove(&session_id).is_some() {
-            StatusCode::UciStatusOk
-        } else {
-            StatusCode::UciStatusSessionNotExist
+        let status = match self.sessions.get_mut(&session_id) {
+            Some(session) => {
+                if session.state == SessionState::SessionStateActive {
+                    self.n_active_sessions -= 1;
+                    if self.n_active_sessions == 0 {
+                        self.set_state(DeviceState::DeviceStateReady);
+                    }
+                }
+                self.sessions.remove(&session_id);
+                StatusCode::UciStatusOk
+            }
+            None => StatusCode::UciStatusSessionNotExist,
         };
-
         SessionDeinitRspBuilder { status }.build()
     }
 
@@ -346,6 +356,41 @@ impl Device {
             },
         }
         .build()
+    }
+
+    pub fn data_message_snd(&mut self, data: DataPacket) -> SessionControlNotification {
+        match data.specialize() {
+            DataPacketChild::DataMessageSnd(data_msg_snd) => {
+                let session_token = data_msg_snd.get_session_handle();
+                if let Some(session) = self.get_session_mut(session_token) {
+                    session.data_message_snd(data_msg_snd)
+                } else {
+                    DataTransferStatusNtfBuilder {
+                        session_token,
+                        status: DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
+                        tx_count: 1, // TODO: support for retries?
+                        uci_sequence_number: 0,
+                    }
+                    .build()
+                    .into()
+                }
+            }
+            DataPacketChild::DataMessageRcv(data_msg_rcv) => {
+                // This function should not be passed anything besides DataMessageSnd
+                let session_token = data_msg_rcv.get_session_handle();
+                DataTransferStatusNtfBuilder {
+                    session_token,
+                    status: DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
+                    tx_count: 1, // TODO: support for retries?
+                    uci_sequence_number: 0,
+                }
+                .build()
+                .into()
+            }
+            _ => {
+                unimplemented!()
+            }
+        }
     }
 
     pub fn command(&mut self, cmd: UciCommand) -> UciResponse {
