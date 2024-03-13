@@ -33,8 +33,10 @@ rust_library_host {
     rustlibs: [
         "libanyhow",
         "libbytes",
+        "libfutures",
         "libglam",
         "libhex",
+        "liblog_rust",
         "libnum_traits",
         "libpdl_runtime",
         "libthiserror",
@@ -45,10 +47,13 @@ rust_library_host {
 
 rust_binary_host {
     name: "pica",
-    srcs: ["src/bin/server/mod.rs"],
+    srcs: ["src/bin/main.rs"],
     proc_macros: ["libnum_derive"],
     rustlibs: [
         "libanyhow",
+        "libenv_logger",
+        "libfutures",
+        "liblog_rust",
         "libpica",
         "libclap",
         "libtokio",
