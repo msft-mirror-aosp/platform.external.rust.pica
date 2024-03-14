@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use crate::packets::uci::*;
-use crate::position::Position;
 use crate::MacAddress;
 use crate::PicaCommand;
 
@@ -25,8 +24,10 @@ use tokio::sync::mpsc;
 use tokio::time;
 
 use super::session::{Session, MAX_SESSION};
+use super::UciPacket;
 
 pub const MAX_DEVICE: usize = 4;
+
 const UCI_VERSION: u16 = 0x0002; // Version 2.0
 const MAC_VERSION: u16 = 0x3001; // Version 1.3.0
 const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
@@ -72,13 +73,12 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
 ];
 
 pub struct Device {
-    handle: usize,
+    pub handle: usize,
     pub mac_address: MacAddress,
-    pub position: Position,
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
     sessions: HashMap<u32, Session>,
-    pub tx: mpsc::Sender<ControlPacket>,
+    pub tx: mpsc::UnboundedSender<UciPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
     config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
@@ -88,18 +88,14 @@ pub struct Device {
 
 impl Device {
     pub fn new(
-        device_handle: usize,
-        tx: mpsc::Sender<ControlPacket>,
+        handle: usize,
+        mac_address: MacAddress,
+        tx: mpsc::UnboundedSender<UciPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
-        let mac_address = {
-            let handle = device_handle as u16;
-            MacAddress::Short(handle.to_be_bytes())
-        };
         Device {
-            handle: device_handle,
+            handle,
             mac_address,
-            position: Position::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
             tx,
@@ -122,7 +118,6 @@ impl Device {
         tokio::spawn(async move {
             time::sleep(Duration::from_millis(5)).await;
             tx.send(DeviceStatusNtfBuilder { device_state }.build().into())
-                .await
                 .unwrap()
         });
     }
@@ -131,25 +126,69 @@ impl Device {
         self.set_state(DeviceState::DeviceStateReady);
     }
 
-    pub fn get_session(&self, session_id: u32) -> Option<&Session> {
+    pub fn session(&self, session_id: u32) -> Option<&Session> {
         self.sessions.get(&session_id)
     }
 
-    pub fn get_session_mut(&mut self, session_id: u32) -> Option<&mut Session> {
+    pub fn session_mut(&mut self, session_id: u32) -> Option<&mut Session> {
         self.sessions.get_mut(&session_id)
+    }
+
+    pub fn can_start_ranging(&self, peer_session: &Session, session_id: u32) -> bool {
+        match self.session(session_id) {
+            Some(session) => {
+                session.session_state() == SessionState::SessionStateActive
+                    && session
+                        .app_config
+                        .is_compatible_for_ranging(&peer_session.app_config)
+            }
+            None => false,
+        }
+    }
+
+    pub fn can_start_data_transfer(&self, session_id: u32) -> bool {
+        match self.session(session_id) {
+            Some(session) => {
+                session.session_state() == SessionState::SessionStateActive
+                    && session.session_type() == SessionType::FiraRangingAndInBandDataSession
+                    && session.app_config.can_start_data_transfer()
+            }
+            None => false,
+        }
+    }
+
+    pub fn can_receive_data_transfer(&self, session_id: u32) -> bool {
+        match self.session(session_id) {
+            Some(session) => {
+                session.session_state() == SessionState::SessionStateActive
+                    && session.session_type() == SessionType::FiraRangingAndInBandDataSession
+                    && session.app_config.can_receive_data_transfer()
+            }
+            None => false,
+        }
+    }
+
+    // Send a response or notification to the Host.
+    fn send_control(&mut self, packet: impl Into<Vec<u8>>) {
+        let _ = self.tx.send(packet.into());
     }
 
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
     fn command_device_reset(&mut self, cmd: DeviceResetCmd) -> DeviceResetRsp {
         let reset_config = cmd.get_reset_config();
-        println!("[{}] DeviceReset", self.handle);
-        println!("  reset_config={:?}", reset_config);
+        log::debug!("[{}] DeviceReset", self.handle);
+        log::debug!("  reset_config={:?}", reset_config);
 
         let status = match reset_config {
             ResetConfig::UwbsReset => StatusCode::UciStatusOk,
         };
-        *self = Device::new(self.handle, self.tx.clone(), self.pica_tx.clone());
+        *self = Device::new(
+            self.handle,
+            self.mac_address,
+            self.tx.clone(),
+            self.pica_tx.clone(),
+        );
         self.init();
 
         DeviceResetRspBuilder { status }.build()
@@ -157,7 +196,7 @@ impl Device {
 
     fn command_get_device_info(&self, _cmd: GetDeviceInfoCmd) -> GetDeviceInfoRsp {
         // TODO: Implement a fancy build time state machine instead of crash at runtime
-        println!("[{}] GetDeviceInfo", self.handle);
+        log::debug!("[{}] GetDeviceInfo", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady);
         GetDeviceInfoRspBuilder {
             status: StatusCode::UciStatusOk,
@@ -171,7 +210,7 @@ impl Device {
     }
 
     pub fn command_get_caps_info(&self, _cmd: GetCapsInfoCmd) -> GetCapsInfoRsp {
-        println!("[{}] GetCapsInfo", self.handle);
+        log::debug!("[{}] GetCapsInfo", self.handle);
 
         let caps = DEFAULT_CAPS_INFO
             .iter()
@@ -189,7 +228,7 @@ impl Device {
     }
 
     pub fn command_set_config(&mut self, cmd: SetConfigCmd) -> SetConfigRsp {
-        println!("[{}] SetConfig", self.handle);
+        log::debug!("[{}] SetConfig", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
 
         let (valid_parameters, invalid_config_status) = cmd.get_tlvs().iter().fold(
@@ -217,7 +256,7 @@ impl Device {
     }
 
     pub fn command_get_config(&self, cmd: GetConfigCmd) -> GetConfigRsp {
-        println!("[{}] GetConfig", self.handle);
+        log::debug!("[{}] GetConfig", self.handle);
 
         // TODO: do this config shall be set on device reset
         let ids = cmd.get_cfg_id();
@@ -240,7 +279,7 @@ impl Device {
                             v: Vec::new(),
                         }),
                     },
-                    Err(_) => println!("Failed to parse config id: {:?}", id),
+                    Err(_) => log::error!("Failed to parse config id: {:?}", id),
                 }
 
                 (valid_parameters, invalid_parameters)
@@ -264,9 +303,9 @@ impl Device {
         let session_id = cmd.get_session_id();
         let session_type = cmd.get_session_type();
 
-        println!("[{}] Session init", self.handle);
-        println!("  session_id=0x{:x}", session_id);
-        println!("  session_type={:?}", session_type);
+        log::debug!("[{}] Session init", self.handle);
+        log::debug!("  session_id=0x{:x}", session_id);
+        log::debug!("  session_type={:?}", session_type);
 
         let status = if self.sessions.len() >= MAX_SESSION {
             StatusCode::UciStatusMaxSessionsExceeded
@@ -284,7 +323,7 @@ impl Device {
                 Some(_) => StatusCode::UciStatusSessionDuplicate,
                 None => {
                     // Should not fail
-                    self.get_session_mut(session_id).unwrap().init();
+                    self.session_mut(session_id).unwrap().init();
                     StatusCode::UciStatusOk
                 }
             }
@@ -295,8 +334,8 @@ impl Device {
 
     fn command_session_deinit(&mut self, cmd: SessionDeinitCmd) -> SessionDeinitRsp {
         let session_id = cmd.get_session_token();
-        println!("[{}] Session deinit", self.handle);
-        println!("  session_id=0x{:x}", session_id);
+        log::debug!("[{}] Session deinit", self.handle);
+        log::debug!("  session_id=0x{:x}", session_id);
 
         let status = match self.sessions.get_mut(&session_id) {
             Some(session) => {
@@ -315,7 +354,7 @@ impl Device {
     }
 
     fn command_session_get_count(&self, _cmd: SessionGetCountCmd) -> SessionGetCountRsp {
-        println!("[{}] Session get count", self.handle);
+        log::debug!("[{}] Session get count", self.handle);
 
         SessionGetCountRspBuilder {
             status: StatusCode::UciStatusOk,
@@ -329,8 +368,8 @@ impl Device {
         cmd: AndroidSetCountryCodeCmd,
     ) -> AndroidSetCountryCodeRsp {
         let country_code = *cmd.get_country_code();
-        println!("[{}] Set country code", self.handle);
-        println!("  country_code={},{}", country_code[0], country_code[1]);
+        log::debug!("[{}] Set country code", self.handle);
+        log::debug!("  country_code={},{}", country_code[0], country_code[1]);
 
         self.country_code = country_code;
         AndroidSetCountryCodeRspBuilder {
@@ -343,7 +382,7 @@ impl Device {
         &mut self,
         _cmd: AndroidGetPowerStatsCmd,
     ) -> AndroidGetPowerStatsRsp {
-        println!("[{}] Get power stats", self.handle);
+        log::debug!("[{}] Get power stats", self.handle);
 
         // TODO
         AndroidGetPowerStatsRspBuilder {
@@ -359,10 +398,11 @@ impl Device {
     }
 
     pub fn data_message_snd(&mut self, data: DataPacket) -> SessionControlNotification {
+        log::debug!("[{}] data_message_send", self.handle);
         match data.specialize() {
             DataPacketChild::DataMessageSnd(data_msg_snd) => {
                 let session_token = data_msg_snd.get_session_handle();
-                if let Some(session) = self.get_session_mut(session_token) {
+                if let Some(session) = self.session_mut(session_token) {
                     session.data_message_snd(data_msg_snd)
                 } else {
                     DataTransferStatusNtfBuilder {
@@ -393,7 +433,7 @@ impl Device {
         }
     }
 
-    pub fn command(&mut self, cmd: UciCommand) -> UciResponse {
+    fn receive_command(&mut self, cmd: UciCommand) -> UciResponse {
         match cmd.specialize() {
             // Handle commands for this device
             UciCommandChild::CoreCommand(core_command) => match core_command.specialize() {
@@ -406,7 +446,6 @@ impl Device {
             },
             // Handle commands for session management
             UciCommandChild::SessionConfigCommand(session_command) => {
-                // Session commands directly handled at Device level
                 match session_command.specialize() {
                     SessionConfigCommandChild::SessionInitCmd(cmd) => {
                         return self.command_session_init(cmd).into();
@@ -435,7 +474,7 @@ impl Device {
                     _ => panic!("Unsupported session command type"),
                 };
 
-                if let Some(session) = self.get_session_mut(session_id) {
+                if let Some(session) = self.session_mut(session_id) {
                     // There is a session matching the session_id in the command
                     // Pass the command through
                     match session_command.specialize() {
@@ -486,7 +525,7 @@ impl Device {
             }
             UciCommandChild::SessionControlCommand(ranging_command) => {
                 let session_id = ranging_command.get_session_id();
-                if let Some(session) = self.get_session_mut(session_id) {
+                if let Some(session) = self.session_mut(session_id) {
                     // Forward to the proper session
                     let response = session.ranging_command(ranging_command);
                     match response.specialize() {
@@ -575,6 +614,61 @@ impl Device {
                 payload: None,
             }
             .build(),
+        }
+    }
+
+    pub fn receive_packet(&mut self, packet: Vec<u8>) {
+        let mt = parse_message_type(packet[0]);
+        match mt {
+            MessageType::Data => match DataPacket::parse(&packet) {
+                Ok(packet) => {
+                    let notification = self.data_message_snd(packet);
+                    self.send_control(notification)
+                }
+                Err(err) => log::error!("failed to parse incoming Data packet: {}", err),
+            },
+            MessageType::Command => {
+                match ControlPacket::parse(&packet) {
+                    // Parsing error. Determine what error response should be
+                    // returned to the host:
+                    // - response and notifications are ignored, no response
+                    // - if the group id is not known, STATUS_UNKNOWN_GID,
+                    // - otherwise, and to simplify the code, STATUS_UNKNOWN_OID is
+                    //      always returned. That means that malformed commands
+                    //      get the same status code, instead of
+                    //      STATUS_SYNTAX_ERROR.
+                    Err(_) => {
+                        let group_id = packet[0] & 0xf;
+                        let opcode_id = packet[1] & 0x3f;
+
+                        let status = if GroupId::try_from(group_id).is_ok() {
+                            StatusCode::UciStatusUnknownOid
+                        } else {
+                            StatusCode::UciStatusUnknownGid
+                        };
+                        // The PDL generated code cannot be used to generate
+                        // responses with invalid group identifiers.
+                        let response = vec![
+                            (u8::from(MessageType::Response) << 5) | group_id,
+                            opcode_id,
+                            0,
+                            1,
+                            status.into(),
+                        ];
+                        self.send_control(response)
+                    }
+
+                    // Parsing success, ignore non command packets.
+                    Ok(cmd) => {
+                        let response = self.receive_command(cmd.try_into().unwrap());
+                        self.send_control(response)
+                    }
+                }
+            }
+
+            // Message types for notifications and responses ignored
+            // by the controller.
+            _ => log::warn!("received unexpected packet of MT {:?}", mt),
         }
     }
 }
