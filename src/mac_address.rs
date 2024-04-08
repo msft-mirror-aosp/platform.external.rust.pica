@@ -43,12 +43,33 @@ impl MacAddress {
     }
 }
 
+impl From<&MacAddress> for u64 {
+    fn from(mac_address: &MacAddress) -> Self {
+        match mac_address {
+            MacAddress::Short(addr) => u16::from_le_bytes(*addr) as u64,
+            MacAddress::Extended(addr) => u64::from_le_bytes(*addr),
+        }
+    }
+}
+
 impl From<MacAddress> for u64 {
     fn from(mac_address: MacAddress) -> Self {
+        u64::from(&mac_address)
+    }
+}
+
+impl From<&MacAddress> for Vec<u8> {
+    fn from(mac_address: &MacAddress) -> Self {
         match mac_address {
-            MacAddress::Short(addr) => u16::from_le_bytes(addr) as u64,
-            MacAddress::Extended(addr) => u64::from_le_bytes(addr),
+            MacAddress::Short(addr) => addr.to_vec(),
+            MacAddress::Extended(addr) => addr.to_vec(),
         }
+    }
+}
+
+impl From<MacAddress> for Vec<u8> {
+    fn from(mac_address: MacAddress) -> Self {
+        Vec::<u8>::from(&mac_address)
     }
 }
 
