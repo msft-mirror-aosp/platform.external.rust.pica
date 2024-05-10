@@ -15,155 +15,192 @@
 little_endian_packets
 
 enum PacketBoundaryFlag : 1 {
-    COMPLETE = 0x00,
-    NOT_COMPLETE = 0x01,
+    COMPLETE = 0,
+    NOT_COMPLETE = 1,
+}
+
+enum MessageType : 3 {
+    DATA = 0x0,
+    COMMAND = 0x1,
+    RESPONSE = 0x2,
+    NOTIFICATION = 0x3,
 }
 
 enum GroupId : 4 {
-    CORE = 0x00,
-    SESSION_CONFIG = 0x01,
-    RANGING_SESSION_CONTROL = 0x02,
-    DATA_CONTROL = 0x03,
-    TEST = 0x0d,
-    VENDOR_RESERVED_9 = 0x09,
-    VENDOR_RESERVED_A = 0x0a,
-    VENDOR_RESERVED_B = 0x0b,
-    VENDOR_ANDROID    = 0x0c,
-    VENDOR_RESERVED_E = 0x0e,
-    VENDOR_RESERVED_F = 0x0f,
+    CORE = 0x0,
+    SESSION_CONFIG = 0x1,
+    SESSION_CONTROL = 0x2,
+    DATA_CONTROL = 0x3,
+    VENDOR_RESERVED_9 = 0x9,
+    VENDOR_RESERVED_A = 0xa,
+    VENDOR_RESERVED_B = 0xb,
+    VENDOR_ANDROID    = 0xc,
+    TEST = 0xd,
+    VENDOR_RESERVED_E = 0xe,
+    VENDOR_RESERVED_F = 0xf,
 }
 
-enum CoreOpCode : 6 {
-    CORE_DEVICE_RESET = 0x00,
-    CORE_DEVICE_STATUS_NTF = 0x01,
-    CORE_GET_DEVICE_INFO = 0x02,
-    CORE_GET_CAPS_INFO = 0x03,
-    CORE_SET_CONFIG = 0x04,
-    CORE_GET_CONFIG = 0x05,
-    CORE_DEVICE_SUSPEND = 0x06,
-    CORE_GENERIC_ERROR_NTF = 0x07,
+enum DataPacketFormat : 4 {
+    DATA_SND = 0x01,
+    DATA_RCV = 0x02,
 }
 
-enum SessionOpCode : 6 {
-    SESSION_INIT = 0x00,
-    SESSION_DEINIT = 0x01,
-    SESSION_STATUS_NTF = 0x02,
-    SESSION_SET_APP_CONFIG = 0x03,
-    SESSION_GET_APP_CONFIG = 0x04,
-    SESSION_GET_COUNT = 0x05,
-    SESSION_GET_STATE = 0x06,
-    SESSION_UPDATE_CONTROLLER_MULTICAST_LIST = 0x07,
+enum CoreOpcodeId : 6 {
+    DEVICE_RESET = 0x00,
+    DEVICE_STATUS = 0x01,
+    GET_DEVICE_INFO = 0x02,
+    GET_CAPS_INFO = 0x03,
+    SET_CONFIG = 0x04,
+    GET_CONFIG = 0x05,
+    GENERIC_ERROR = 0x07,
+    QUERY_UWBS_TIMESTAMP = 0x08,
 }
 
-enum RangeOpCode : 6 {
-    RANGE_START = 0x00,
-    RANGE_STOP = 0x01,
-    RANGE_INTERVAL_UPDATE_REQ = 0x02,
-    RANGE_GET_RANGING_COUNT = 0x03,
+enum SessionConfigOpcodeId : 6 {
+    INIT = 0x00,
+    DEINIT = 0x01,
+    STATUS = 0x02,
+    SET_APP_CONFIG = 0x03,
+    GET_APP_CONFIG = 0x04,
+    GET_COUNT = 0x05,
+    GET_STATE = 0x06,
+    UPDATE_CONTROLLER_MULTICAST_LIST = 0x07,
+    UPDATE_DT_ANCHOR_RANGING_ROUNDS = 0x08,
+    UPDATE_DT_TAG_RANGING_ROUNDS = 0x09,
+    QUERY_DATA_SIZE_IN_RANGING = 0x0b,
 }
 
-enum AppDataOpCode : 6 {
-    APP_DATA_TX = 0x00,
-    APP_DATA_RX = 0x01,
+enum SessionControlOpcodeId : 6 {
+    START = 0x00, // INFO_NTF
+    STOP = 0x01,
+    GET_RANGING_COUNT = 0x03,
+    DATA_CREDIT = 0x04,
+    DATA_TRANSFER_STATUS = 0x05,
 }
 
-enum PicaOpCode : 6 {
-    PICA_INIT_DEVICE = 0x00,
-    PICA_SET_DEVICE_POSITION = 0x01,
-    PICA_CREATE_BEACON = 0x02,
-    PICA_SET_BEACON_POSITION = 0x03,
-    PICA_DESTROY_BEACON = 0x04,
+enum AndroidOpcodeId : 6 {
+    GET_POWER_STATS = 0x00,
+    SET_COUNTRY_CODE = 0x01,
+    FIRA_RANGE_DIAGNOSTICS = 0x02,
 }
 
-// Android vendor commands
-enum AndroidOpCode : 6 {
-    ANDROID_GET_POWER_STATS = 0x0,
-    ANDROID_SET_COUNTRY_CODE = 0x1,
-}
-
-enum StatusCode : 8 {
+/// [UCI] 8.5 Status Codes
+enum Status : 8 {
     // Generic Status Codes
-    UCI_STATUS_OK = 0x00,
-    UCI_STATUS_REJECTED = 0x01,
-    UCI_STATUS_FAILED = 0x02,
-    UCI_STATUS_SYNTAX_ERROR = 0x03,
-    UCI_STATUS_INVALID_PARAM = 0x04,
-    UCI_STATUS_INVALID_RANGE = 0x05,
-    UCI_STATUS_INVALID_MSG_SIZE = 0x06,
-    UCI_STATUS_UNKNOWN_GID = 0x07,
-    UCI_STATUS_UNKNOWN_OID = 0x08,
-    UCI_STATUS_READ_ONLY = 0x09,
-    UCI_STATUS_COMMAND_RETRY = 0x0A,
+    OK = 0x00,
+    REJECTED = 0x01,
+    FAILED = 0x02,
+    SYNTAX_ERROR = 0x03,
+    INVALID_PARAM = 0x04,
+    INVALID_RANGE = 0x05,
+    INVALID_MESSAGE_SIZE = 0x06,
+    UNKNOWN_GID = 0x07,
+    UNKNOWN_OID = 0x08,
+    READ_ONLY = 0x09,
+    UCI_MESSAGE_RETRY = 0x0A,
+    UNKNOWN = 0x0B,
+    NOT_APPLICABLE = 0x0C,
 
     // UWB Session Specific Status Codes
-    UCI_STATUS_SESSION_NOT_EXIST = 0x11,
-    UCI_STATUS_SESSION_DUPLICATE = 0x12,
-    UCI_STATUS_SESSION_ACTIVE = 0x13,
-    UCI_STATUS_MAX_SESSIONS_EXCEEDED = 0x14,
-    UCI_STATUS_SESSION_NOT_CONFIGURED = 0x15,
-    UCI_STATUS_ACTIVE_SESSION_ONGOING = 0x16,
-    UCI_STATUS_MULTICAST_LIST_FULL = 0x17,
-    UCI_STATUS_ADDRESS_NOT_FOUND = 0x18,
-    UCI_STATUS_ADDRESS_ALREADY_PRESENT = 0x19,
+    ERROR_SESSION_NOT_EXIST = 0x11,
+    ERROR_SESSION_DUPLICATE = 0x12,
+    ERROR_SESSION_ACTIVE = 0x13,
+    ERROR_MAX_SESSIONS_EXCEEDED = 0x14,
+    ERROR_SESSION_NOT_CONFIGURED = 0x15,
+    ERROR_ACTIVE_SESSIONS_ONGOING = 0x16,
+    ERROR_MULTICAST_LIST_FULL = 0x17,
+    ERROR_UWB_INITIATION_TIME_TOO_OLD = 0x1A,
+    OK_NEGATIVE_DISTANCE_REPORT = 0x1B,
 
     // UWB Ranging Session Specific Status Codes
-    UCI_STATUS_RANGING_TX_FAILED = 0x20,
-    UCI_STATUS_RANGING_RX_TIMEOUT = 0x21,
-    UCI_STATUS_RANGING_RX_PHY_DEC_FAILED = 0x22,
-    UCI_STATUS_RANGING_RX_PHY_TOA_FAILED = 0x23,
-    UCI_STATUS_RANGING_RX_PHY_STS_FAILED = 0x24,
-    UCI_STATUS_RANGING_RX_MAC_DEC_FAILED = 0x25,
-    UCI_STATUS_RANGING_RX_MAC_IE_DEC_FAILED = 0x26,
-    UCI_STATUS_RANGING_RX_MAC_IE_MISSING = 0x27,
-
-    // UWB Data Session Specific Status Codes
-    UCI_STATUS_DATA_MAX_TX_PSDU_SIZE_EXCEEDED = 0x30,
-    UCI_STATUS_DATA_RX_CRC_ERROR = 0x31,
+    RANGING_TX_FAILED = 0x20,
+    RANGING_RX_TIMEOUT = 0x21,
+    RANGING_RX_PHY_DEC_FAILED = 0x22,
+    RANGING_RX_PHY_TOA_FAILED = 0x23,
+    RANGING_RX_PHY_STS_FAILED = 0x24,
+    RANGING_RX_MAC_DEC_FAILED = 0x25,
+    RANGING_RX_MAC_IE_DEC_FAILED = 0x26,
+    RANGING_RX_MAC_IE_MISSING = 0x27,
+    ERROR_ROUND_INDEX_NOT_ACTIVATED = 0x28,
+    ERROR_NUMBER_OF_ACTIVE_RANGING_ROUNDS_EXCEEDED = 0x29,
+    ERROR_DL_TDOA_DEVICE_ADDRESS_NOT_MATCHING_IN_REPLY_TIME_LIST = 0x2A,
 
     // Vendor Specific Status Codes
-    UCI_STATUS_ERROR_CCC_SE_BUSY = 0x50,
-    UCI_STATUS_ERROR_CCC_LIFECYCLE = 0x51,
+    VENDOR_SPECIFIC = 0x50..0xFF {
+        ERROR_CCC_SE_BUSY = 0x50,
+        ERROR_CCC_LIFECYCLE = 0x51,
+        ERROR_STOPPED_DUE_TO_OTHER_SESSION_CONFLICT = 0x52,
+        REGULATION_UWB_OFF = 0x53,
+    },
+
+    // All others reserved for future use
+    RFU = ..,
+}
+
+// This needs a separate StatusCode as the Status code values in the DATA_RCV packet have
+// different values from the generic StatusCode above.
+enum DataRcvStatusCode : 8 {
+    UCI_STATUS_SUCCESS = 0x00,
+    UCI_STATUS_ERROR = 0x01,
+    UCI_STATUS_UNKNOWN = 0x02,
+}
+
+enum CreditAvailability : 8 {
+    CREDIT_NOT_AVAILABLE = 0,
+    CREDIT_AVAILABLE = 1,
+}
+
+// The UCI spec defines these status codes for a DATA_TRANSFER_STATUS_NTF packet.
+enum DataTransferNtfStatusCode : 8 {
+    UCI_DATA_TRANSFER_STATUS_REPETITION_OK = 0x00,
+    UCI_DATA_TRANSFER_STATUS_OK = 0x01,
+    UCI_DATA_TRANSFER_STATUS_ERROR_DATA_TRANSFER = 0x02,
+    UCI_DATA_TRANSFER_STATUS_ERROR_NO_CREDIT_AVAILABLE = 0x03,
+    UCI_DATA_TRANSFER_STATUS_ERROR_REJECTED = 0x04,
+    UCI_DATA_TRANSFER_STATUS_SESSION_TYPE_NOT_SUPPORTED = 0x05,
+    UCI_DATA_TRANSFER_STATUS_ERROR_DATA_TRANSFER_IS_ONGOING = 0x06,
+    UCI_DATA_TRANSFER_STATUS_INVALID_FORMAT = 0x07,
 }
 
 enum ResetConfig : 8 {
     UWBS_RESET = 0x00,
 }
 
-enum DeviceConfigId : 8 {
-    DEVICE_STATE = 0x00,
-    LOW_POWER_MODE = 0x01,
-}
-
+// [UCI] Table 45: APP Configuration Parameters IDs
 enum AppConfigTlvType : 8 {
     DEVICE_TYPE = 0x00,
     RANGING_ROUND_USAGE = 0x01,
     STS_CONFIG = 0x02,
     MULTI_NODE_MODE = 0x03,
     CHANNEL_NUMBER = 0x04,
-    NO_OF_CONTROLEE = 0x05,
+    NUMBER_OF_CONTROLEES = 0x05,
     DEVICE_MAC_ADDRESS = 0x06,
     DST_MAC_ADDRESS = 0x07,
     SLOT_DURATION = 0x08,
-    RANGING_INTERVAL = 0x09,
+    RANGING_DURATION = 0x09,
     STS_INDEX = 0x0A,
     MAC_FCS_TYPE = 0x0B,
     RANGING_ROUND_CONTROL = 0x0C,
     AOA_RESULT_REQ = 0x0D,
-    RNG_DATA_NTF = 0x0E,
-    RNG_DATA_NTF_PROXIMITY_NEAR = 0x0F,
-    RNG_DATA_NTF_PROXIMITY_FAR = 0x10,
+    SESSION_INFO_NTF_CONFIG = 0x0E,
+    NEAR_PROXIMITY_CONFIG = 0x0F,
+    FAR_PROXIMITY_CONFIG = 0x10,
     DEVICE_ROLE = 0x11,
     RFRAME_CONFIG = 0x12,
+    RSSI_REPORTING = 0x13,
     PREAMBLE_CODE_INDEX = 0x14,
     SFD_ID = 0x15,
     PSDU_DATA_RATE = 0x16,
     PREAMBLE_DURATION = 0x17,
+    LINK_LAYER_MODE = 0x18,
+    DATA_REPETITION_COUNT = 0x19,
     RANGING_TIME_STRUCT = 0x1A,
     SLOTS_PER_RR = 0x1B,
-    TX_ADAPTIVE_PAYLOAD_POWER = 0x1C,
-    RESPONDER_SLOT_INDEX = 0x1E,
+    AOA_BOUND_CONFIG = 0x1D,
     PRF_MODE = 0x1F,
-    SCHEDULED_MODE = 0x22,
+    CAP_SIZE_RANGE = 0x20,
+    TX_JITTER_WINDOW_SIZE = 0x21,
+    SCHEDULE_MODE = 0x22,
     KEY_ROTATION = 0x23,
     KEY_ROTATION_RATE = 0x24,
     SESSION_PRIORITY = 0x25,
@@ -181,19 +218,236 @@ enum AppConfigTlvType : 8 {
     BPRF_PHR_DATA_RATE = 0x31,
     MAX_NUMBER_OF_MEASUREMENTS = 0x32,
     STS_LENGTH = 0x35,
+    MIN_FRAMES_PER_RR = 0x3A,
+    MTU_SIZE = 0x3B,
+    INTER_FRAME_INTERVAL = 0x3C,
+    DL_TDOA_RANGING_METHOD  = 0x3D,
+    DL_TDOA_TX_TIMESTAMP_CONF = 0x3E,
+    DL_TDOA_HOP_COUNT = 0x3F,
+    DL_TDOA_ANCHOR_CFO = 0x40,
+    DL_TDOA_ANCHOR_LOCATION = 0x41,
+    DL_TDOA_TX_ACTIVE_RANGING_ROUNDS = 0x42,
+    DL_TDOA_BLOCK_SKIPPING = 0x43,
+    DL_TDOA_TIME_REFERENCE_ANCHOR = 0x44,
+    SESSION_KEY = 0x45,
+    SUB_SESSION_KEY = 0x46,
+    SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG = 0x47,
+    SESSION_TIME_BASE = 0x48,
+    DL_TDOA_RESPONDER_TOF = 0x49,
+    SECURE_RANGING_NEFA_LEVEL = 0x4A,
+    SECURE_RANGING_CSW_LENGTH = 0x4B,
+    APPLICATION_DATA_ENDPOINT = 0x4C,
+    OWR_AOA_MEASUREMENT_NTF_PERIOD = 0x4D,
+    RFU = 0x4E..0x9F,
 
-    // CCC specific
-    CCC_HOP_MODE_KEY = 0xA0,
-    CCC_UWB_TIME0 = 0xA1,
-    CCC_RANGING_PROTOCOL_VER = 0xA3,
-    CCC_UWB_CONFIG_ID = 0xA4,
-    CCC_PULSESHAPE_COMBO = 0xA5,
-    CCC_URSK_TTL = 0xA6,
+    VENDOR_SPECIFIC_1 = 0xA0..0xDF {
+        // CCC specific
+        CCC_HOP_MODE_KEY = 0xA0,
+        CCC_UWB_TIME0 = 0xA1,
+        CCC_RANGING_PROTOCOL_VER = 0xA3,
+        CCC_UWB_CONFIG_ID = 0xA4,
+        CCC_PULSESHAPE_COMBO = 0xA5,
+        CCC_URSK_TTL = 0xA6,
+        CCC_LAST_INDEX_USED  = 0xA8,
+    },
 
-    // Interleaving ratio if AOA_RESULT_REQ is set to 0xF0.
-    NB_OF_RANGE_MEASUREMENTS = 0xE3,
-    NB_OF_AZIMUTH_MEASUREMENTS = 0xE4,
-    NB_OF_ELEVATION_MEASUREMENTS = 0xE5,
+    // Reserved for extension IDs.
+    // ID is 2 Octets in length. Refer section 8.1 for details
+    ID_EXTENSION = 0xE0..0xE2,
+
+    VENDOR_SPECIFIC_2 = 0xE3..0xFF {
+        // Interleaving ratio if AOA_RESULT_REQ is set to 0xF0.
+        NB_OF_RANGE_MEASUREMENTS = 0xE3,
+        NB_OF_AZIMUTH_MEASUREMENTS = 0xE4,
+        NB_OF_ELEVATION_MEASUREMENTS = 0xE5,
+        ENABLE_DIAGNOSTICS = 0xE8,
+        DIAGRAMS_FRAME_REPORTS_FIELDS = 0xE9,
+    },
+}
+
+enum DeviceType : 8 {
+    // [MAC] 5.1.2
+    // Device utilizing the ranging features set through Control Messages
+    CONTROLEE = 0x00,
+    // [MAC] 5.1.1
+    // Device controlling the ranging features through Control Messages
+    CONTROLLER = 0x01,
+}
+
+enum RangingRoundUsage : 8 {
+    SS_TWR_DEFERRED_MODE = 0x01,
+    DS_TWR_DEFERRED_MODE = 0x02,
+    SS_TWR_NON_DEFERRED_MODE = 0x03,
+    DS_TWR_NON_DEFERRED_MODE = 0x04,
+    ON_WAY_RANGING_DL_TDOA = 0x05,
+    OWR_AOA_MEASUREMENT = 0x06,
+    ESS_TWR_NON_DEFERRED = 0x07,
+    ADS_TWR_NON_DEFERRED = 0x08,
+}
+
+enum StsConfig : 8 {
+    STATIC = 0x00, // Default
+    DYNAMIC = 0x01,
+    DYNAMIC_FOR_RESPONDER_SUB_SESSION_KEY = 0x02,
+    PROVISIONED = 0x03,
+    PROVISIONED_FOR_RESPONDER_SUB_SESSION_KEY = 0x04,
+}
+
+enum MultiNodeMode : 8 {
+    ONE_TO_ONE = 0x00,
+    ONE_TO_MANY = 0x01,
+}
+
+enum ChannelNumber : 8 {
+    CHANNEL_NUMBER_5 = 0x05,
+    CHANNEL_NUMBER_6 = 0x06,
+    CHANNEL_NUMBER_8 = 0x08,
+    CHANNEL_NUMBER_9 = 0x09, // Default
+    CHANNEL_NUMBER_10 = 0x0a,
+    CHANNEL_NUMBER_12 = 0x0c,
+    CHANNEL_NUMBER_13 = 0x0d,
+    CHANNEL_NUMBER_14 = 0x0e,
+}
+
+enum MacFcsType : 8 {
+    CRC_16 = 0x00, // Default
+    CRC_32 = 0x01,
+}
+
+struct RangingRoundControl {
+    rrrm : 1, // Default 1
+    _fixed_ = 1 : 1,
+    rcp : 1, // Default 0
+    _reserved_ : 3,
+    mrp : 1, // Default 0
+    mrm : 1, // Default 0
+}
+
+enum AoaResultReq : 8 {
+    AOA_DISABLED = 0x00,
+    AOA_ENABLED = 0x01, // Default
+    AOA_ENABLED_AZIMUTH_ONLY = 0x02,
+    AOA_ENABLED_ELEVATION_ONLY = 0x03,
+}
+
+enum SessionInfoNtfConfig : 8 {
+    DISABLE = 0x00,
+    ENABLE = 0x01, // Default
+    ENABLE_PROXIMITY_TRIGGER = 0x02,
+    ENABLE_AOA_TRIGGER = 0x03,
+    ENABLE_PROXIMITY_AOA_TRIGGER = 0x04,
+    ENABLE_PROXIMITY_EDGE_TRIGGER = 0x05,
+    ENABLE_AOA_EDGE_TRIGGER = 0x06,
+    ENABLE_PROXIMITY_AOA_EDGE_TRIGGER = 0x07,
+}
+
+enum DeviceRole : 8 {
+    // [MAC] 5.1.3
+    // Device initiating a ranging exchange with a ranging initiation message
+    RESPONDER = 0x00,
+    // [MAC] 5.1.4
+    // Device responding to ranging initiation messages
+    INITIATOR = 0x01,
+    ADVERTISER = 0x05,
+    OBSERVER = 0x06,
+    DT_ANCHOR = 0x07,
+    DT_TAG = 0x08,
+}
+
+enum RframeConfig : 8 {
+    SP0 = 0x00,
+    SP1 = 0x01,
+    SP3 = 0x03, // Default
+}
+
+enum RssiReporting : 8 {
+    DISABLE = 0x00, // Default
+    ENABLE = 0x01,
+}
+
+enum PsduDataRate : 8 {
+    DATA_RATE_6M81 = 0x00,
+    DATA_RATE_7M80 = 0x01,
+    DATA_RATE_27M2 = 0x02,
+    DATA_RATE_31M2 = 0x03,
+}
+
+enum PreambleDuration : 8 {
+    DURATION_32_SYMBOLS = 0x00,
+    DURATION_64_SYMBOLS = 0x01, // Default
+}
+
+enum LinkLayerMode : 8 {
+    BYPASS_MODE = 0x00, // Default
+}
+
+enum RangingTimeStruct : 8 {
+    BLOCK_BASED_SCHEDULING = 0x01, // Default
+}
+
+enum PrfMode : 8 {
+    BPRF_MODE = 0x00, // Default
+    HPRF_MODE_124M8 = 0x01,
+    HPRF_MODE_249M6 = 0x02,
+}
+
+enum ScheduleMode : 8 {
+    CONTENTION_BASED = 0x00,
+    TIME_SCHEDULED = 0x01,
+}
+
+enum KeyRotation : 8 {
+    DISABLE = 0x00, // Default
+    ENABLE = 0x01,
+}
+
+enum MacAddressMode : 8 {
+    // MAC address is 2 bytes and 2 bytes to be used in MAC header
+    MODE_0 = 0x00, // Default
+    // MAC address is 8 bytes and 2 bytes to be used in MAC header
+    // (Not supported).
+    MODE_1 = 0x01,
+    // MAC address is 8 bytes and 8 bytes to be used in MAC header
+    MODE_2 = 0x02,
+}
+
+enum HoppingMode : 8 {
+    DISABLE = 0x00, // Default
+    ENABLE = 0x01,
+}
+
+struct ResultReportConfig {
+    tof : 1, // Default 1
+    aoa_azimuth : 1,
+    aoa_elevation : 1,
+    aoa_fom : 1,
+    _reserved_ : 4,
+}
+
+enum BprfPhrDataRate : 8 {
+    DATA_RATE_850K = 0x00, // Default
+    DATA_RATE_6M81 = 0x01
+}
+
+enum StsLength : 8 {
+    LENGTH_32_SYMBOLS = 0x00, // Default
+    LENGTH_64_SYMBOLS = 0x01,
+    LENGTH_128_SYMBOLS = 0x02,
+}
+
+enum DlTdoaRangingMethod : 8 {
+    SS_TWR = 0x00,
+    DS_TWR = 0x01, // Default
+}
+
+enum DlTdoaAnchorCfo : 8 {
+    ANCHOR_CFO_NOT_INCLUDED = 0x00,
+    ANCHOR_CFO_INCLUDED = 0x01, // Default
+}
+
+enum SessionDataTransferStatusNtfConfig : 8 {
+    DISABLE = 0x00, // Default
+    ENABLE = 0x01,
 }
 
 enum CapTlvType : 8 {
@@ -215,18 +469,36 @@ enum CapTlvType : 8 {
     SUPPORTED_HPRF_PARAMETER_SETS = 0x0F,
     SUPPORTED_AOA = 0x10,
     SUPPORTED_EXTENDED_MAC_ADDRESS = 0x11,
-    SUPPORTED_AOA_RESULT_REQ_ANTENNA_INTERLEAVING = 0xE3,
-    SUPPORTED_POWER_STATS = 0xC0,
+    SUPPORTED_MAX_MESSAGE_SIZE = 0x12,
+    SUPPORTED_MAX_DATA_PACKET_PAYLOAD_SIZE = 0x13,
+    RFU_CAP_TLV_TYPE_RANGE_1 = 0x14..0x9F,
 
-    // CCC specific
-    CCC_SUPPORTED_CHAPS_PER_SLOT = 0xA0,
-    CCC_SUPPORTED_SYNC_CODES = 0xA1,
-    CCC_SUPPORTED_HOPPING_CONFIG_MODES_AND_SEQUENCES = 0xA2,
-    CCC_SUPPORTED_CHANNELS = 0xA3,
-    CCC_SUPPORTED_VERSIONS = 0xA4,
-    CCC_SUPPORTED_UWB_CONFIGS = 0xA5,
-    CCC_SUPPORTED_PULSE_SHAPE_COMBOS = 0xA6,
-    CCC_SUPPORTED_RAN_MULTIPLIER = 0xA7,
+    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_1 = 0xA0..0xBF {
+        // CCC specific
+        CCC_SUPPORTED_CHAPS_PER_SLOT = 0xA0,
+        CCC_SUPPORTED_SYNC_CODES = 0xA1,
+        CCC_SUPPORTED_HOPPING_CONFIG_MODES_AND_SEQUENCES = 0xA2,
+        CCC_SUPPORTED_CHANNELS = 0xA3,
+        CCC_SUPPORTED_VERSIONS = 0xA4,
+        CCC_SUPPORTED_UWB_CONFIGS = 0xA5,
+        CCC_SUPPORTED_PULSE_SHAPE_COMBOS = 0xA6,
+        CCC_SUPPORTED_RAN_MULTIPLIER = 0xA7,
+        CCC_SUPPORTED_MAX_RANGING_SESSION_NUMBER = 0xA8,
+    },
+
+    SUPPORTED_POWER_STATS = 0xC0,
+    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_2 = 0xC1..0xDF,
+    RFU_CAP_TLV_TYPE_RANGE_2 = 0xE0..0xE2,
+
+    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_3 = 0xE3..0xFF {
+        SUPPORTED_AOA_RESULT_REQ_ANTENNA_INTERLEAVING = 0xE3,
+        SUPPORTED_MIN_RANGING_INTERVAL_MS = 0xE4,
+        SUPPORTED_RANGE_DATA_NTF_CONFIG = 0xE5,
+        SUPPORTED_RSSI_REPORTING = 0xE6,
+        SUPPORTED_DIAGNOSTICS = 0xE7,
+        SUPPORTED_MIN_SLOT_DURATION_RSTU = 0xE8,
+        SUPPORTED_MAX_RANGING_SESSION_NUMBER = 0xE9,
+    },
 }
 
 
@@ -257,19 +529,68 @@ enum ReasonCode : 8 {
     STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS = 0x00,
     MAX_RANGING_ROUND_RETRY_COUNT_REACHED = 0x01,
     MAX_NUMBER_OF_MEASUREMENTS_REACHED = 0x02,
+    SESSION_SUSPENDED_DUE_TO_INBAND_SIGNAL = 0x03,
+    SESSION_RESUMED_DUE_TO_INBAND_SIGNAL = 0x04,
+    SESSION_STOPPED_DUE_TO_INBAND_SIGNAL = 0x05,
+    RFU_REASON_CODE_RANGE_1 = 0x06..0x1C,
+    ERROR_INVALID_UL_TDOA_RANDOM_WINDOW = 0x1D,
+    ERROR_MIN_RFRAMES_PER_RR_NOT_SUPPORTED = 0x1E,
+    ERROR_TX_DELAY_NOT_SUPPORTED = 0x1F,
     ERROR_SLOT_LENGTH_NOT_SUPPORTED = 0x20,
     ERROR_INSUFFICIENT_SLOTS_PER_RR = 0x21,
     ERROR_MAC_ADDRESS_MODE_NOT_SUPPORTED = 0x22,
-    ERROR_INVALID_RANGING_INTERVAL = 0x23,
+    ERROR_INVALID_RANGING_DURATION = 0x23,
     ERROR_INVALID_STS_CONFIG = 0x24,
     ERROR_INVALID_RFRAME_CONFIG = 0x25,
+    ERROR_HUS_NOT_ENOUGH_SLOTS = 0x26,
+    ERROR_HUS_CFP_PHASE_TOO_SHORT = 0x27,
+    ERROR_HUS_CAP_PHASE_TOO_SHORT = 0x28,
+    ERROR_HUS_OTHERS = 0x29,
+    ERROR_STATUS_SESSION_KEY_NOT_FOUND = 0x2A,
+    ERROR_STATUS_SUB_SESSION_KEY_NOT_FOUND = 0x2B,
+    ERROR_INVALID_PREAMBLE_CODE_INDEX = 0x2C,
+    ERROR_INVALID_SFD_ID = 0x2D,
+    ERROR_INVALID_PSDU_DATA_RATE = 0x2E,
+    ERROR_INVALID_PHR_DATA_RATE = 0x2F,
+    ERROR_INVALID_PREAMBLE_DURATION = 0x30,
+    ERROR_INVALID_STS_LENGTH = 0x31,
+    ERROR_INVALID_NUM_OF_STS_SEGMENTS = 0x32,
+    ERROR_INVALID_NUM_OF_CONTROLEES = 0x33,
+    ERROR_MAX_RANGING_REPLY_TIME_EXCEEDED = 0x34,
+    ERROR_INVALID_DST_ADDRESS_LIST = 0x35,
+    ERROR_INVALID_OR_NOT_FOUND_SUB_SESSION_ID = 0x36,
+    ERROR_INVALID_RESULT_REPORT_CONFIG = 0x37,
+    ERROR_INVALID_RANGING_ROUND_CONTROL_CONFIG = 0x38,
+    ERROR_INVALID_RANGING_ROUND_USAGE = 0x39,
+    ERROR_INVALID_MULTI_NODE_MODE = 0x3A,
+    ERROR_RDS_FETCH_FAILURE = 0x3B,
+    ERROR_REF_UWB_SESSION_DOES_NOT_EXIST = 0x3C,
+    ERROR_REF_UWB_SESSION_RANGING_DURATION_MISMATCH = 0x3D,
+    ERROR_REF_UWB_SESSION_INVALID_OFFSET_TIME = 0x3E,
+    ERROR_REF_UWB_SESSION_LOST = 0x3F,
+    RFU_REASON_CODE_RANGE_2 = 0x40..0x7F {
+        ERROR_DT_ANCHOR_RANGING_ROUNDS_NOT_CONFIGURED = 0x40,
+        ERROR_DT_TAG_RANGING_ROUNDS_NOT_CONFIGURED = 0x41,
+    },
+    VENDOR_SPECIFIC_REASON_CODE_RANGE_1 = 0x80..0xFE {
+        ERROR_INVALID_CHANNEL_WITH_AOA = 0x80,
+        ERROR_STOPPED_DUE_TO_OTHER_SESSION_CONFLICT = 0x81,
+    },
+    // For internal usage, we will use 0xFF as default.
+    VENDOR_SPECIFIC_REASON_CODE_2 = 0xFF,
 }
 
-enum MulticastUpdateStatusCode : 8 {
-    STATUS_OK_MULTICAST_LIST_UPDATE = 0x00,
-    STATUS_ERROR_MULTICAST_LIST_FULL = 0x01,
-    STATUS_ERROR_KEY_FETCH_FAIL = 0x02,
-    STATUS_ERROR_SUB_SESSION_ID_NOT_FOUND = 0x03,
+/// [UCI] Table 40: Multicast list update status codes
+enum MulticastUpdateStatus : 8 {
+    OK_MULTICAST_LIST_UPDATE = 0x00,
+    ERROR_MULTICAST_LIST_FULL = 0x01,
+    ERROR_KEY_FETCH_FAIL = 0x02,
+    ERROR_SUB_SESSION_ID_NOT_FOUND = 0x03,
+    ERROR_SUB_SESSION_KEY_NOT_FOUND = 0x04,
+    ERROR_SUB_SESSION_KEY_NOT_APPLICABLE = 0x05,
+    ERROR_SESSION_KEY_NOT_FOUND = 0x06,
+    ERROR_ADDRESS_NOT_FOUND = 0x07,
+    ERROR_ADDRESS_ALREADY_PRESENT = 0x08,
 }
 
 enum MacAddressIndicator : 8 {
@@ -279,123 +600,139 @@ enum MacAddressIndicator : 8 {
 
 enum SessionType: 8 {
     FIRA_RANGING_SESSION = 0x00,
-    FIRA_DATA_TRANSFER = 0x01,
+    FIRA_RANGING_AND_IN_BAND_DATA_SESSION = 0x01,
+    FIRA_DATA_TRANSFER_SESSION = 0x02,
+    FIRA_RANGING_ONLY_PHASE = 0x03,
+    FIRA_IN_BAND_DATA_PHASE = 0x04,
+    FIRA_RANGING_WITH_DATA_PHASE = 0x05,
     CCC = 0xA0,
+    DEVICE_TEST_MODE = 0xD0,
 }
 
-enum MessageType: 3 {
-    COMMAND = 0x01,
-    RESPONSE = 0x02,
-    NOTIFICATION = 0x03,
+// Used to parse message type
+packet CommonPacketHeader {
+  _reserved_ : 4,
+  pbf : PacketBoundaryFlag,
+  mt : MessageType,
 }
 
-packet UciPacket {
-    group_id: GroupId,
-    packet_boundary_flag: PacketBoundaryFlag,
-    message_type: MessageType,
-    opcode: 6,
-    _reserved_: 2,
-    _reserved_: 8,
-    _size_(_payload_): 8,
+// Used to parse control packet length
+packet ControlPacketHeader {
+  _reserved_ : 4,
+  pbf : PacketBoundaryFlag,
+  mt : MessageType,
+  _reserved_ : 16,
+  payload_length : 8,
+}
+
+// Used to parse data packet length
+packet DataPacketHeader {
+  _reserved_ : 4,
+  pbf : PacketBoundaryFlag,
+  mt : MessageType,
+  _reserved_ : 8,
+  payload_length : 16,
+}
+
+// Unframed UCI control packet. The framing information is masked
+// including the payload length. The user must handle segmentation and
+// reassembly on the raw bytes before attempting to parse the packet.
+packet ControlPacket {
+    gid : GroupId,
+    _reserved_ : 1,
+    mt : MessageType,
     _payload_,
 }
 
-// TODO(b/202760099): Handle fragmentation of packets if the size exceed max allowed.
-packet UciCommand : UciPacket (message_type = COMMAND, packet_boundary_flag = COMPLETE) {
-    _payload_,
+packet DataPacket {
+  dpf : DataPacketFormat,
+  pbf : PacketBoundaryFlag,
+  mt: MessageType,
+  _reserved_ : 8,
+  _reserved_ : 16,
+  _payload_,
 }
 
-packet UciResponse : UciPacket (message_type = RESPONSE, packet_boundary_flag = COMPLETE) {
-    _payload_,
+packet DataMessageSnd : DataPacket (dpf = DATA_SND, mt = DATA) {
+    session_handle: 32,
+    destination_address: 64,
+    data_sequence_number: 16,
+    _size_(application_data): 16,
+    application_data: 8[]
 }
 
-packet UciNotification : UciPacket (message_type = NOTIFICATION, packet_boundary_flag = COMPLETE) {
-    _payload_,
+packet DataMessageRcv : DataPacket (dpf = DATA_RCV, mt = DATA) {
+    session_handle: 32,
+    status: Status,
+    source_address: 64,
+    data_sequence_number: 16,
+    _size_(application_data): 16,
+    application_data: 8[]
 }
 
-packet CoreCommand : UciCommand (group_id = CORE) {
-    _body_,
+packet CorePacket : ControlPacket (gid = CORE) {
+  oid : CoreOpcodeId,
+  _reserved_ : 2,
+  _reserved_ : 16,
+  _payload_,
 }
 
-packet CoreResponse : UciResponse (group_id = CORE) {
-    _body_,
+packet SessionConfigPacket : ControlPacket (gid = SESSION_CONFIG) {
+  oid : SessionConfigOpcodeId,
+  _reserved_ : 2,
+  _reserved_ : 16,
+  _payload_,
 }
 
-packet CoreNotification : UciNotification (group_id = CORE) {
-    _body_,
+packet SessionControlPacket : ControlPacket (gid = SESSION_CONTROL) {
+  oid : SessionControlOpcodeId,
+  _reserved_ : 2,
+  _reserved_ : 16,
+  _payload_,
 }
 
-packet SessionCommand : UciCommand (group_id = SESSION_CONFIG) {
-    _body_,
+packet AndroidPacket : ControlPacket (gid = VENDOR_ANDROID) {
+  oid : AndroidOpcodeId,
+  _reserved_ : 2,
+  _reserved_ : 16,
+  _payload_,
 }
 
-packet SessionResponse : UciResponse (group_id = SESSION_CONFIG) {
-    _body_,
-}
+// ---------------------------- Core group ---------------------------------- //
 
-packet SessionNotification : UciNotification (group_id = SESSION_CONFIG) {
-    _body_,
-}
-
-packet RangingCommand : UciCommand (group_id = RANGING_SESSION_CONTROL) {
-    session_id: 32,
-    _body_,
-}
-
-packet RangingResponse : UciResponse (group_id = RANGING_SESSION_CONTROL) {
-    _body_,
-}
-
-packet RangingNotification : UciNotification (group_id = RANGING_SESSION_CONTROL) {
-    _body_,
-}
-
-packet AndroidCommand : UciCommand (group_id = VENDOR_ANDROID) {
-    _body_,
-}
-
-packet AndroidResponse : UciResponse (group_id = VENDOR_ANDROID) {
-    _body_,
-}
-
-packet AndroidNotification : UciNotification (group_id = VENDOR_ANDROID) {
-    _body_,
-}
-
-// TODO: b/202760099: Use the correspnding opcode enum instead of the raw value in the |opcode| field.
-packet DeviceResetCmd : CoreCommand (opcode = 0x0) { //CORE_DEVICE_RESET
+packet CoreDeviceResetCmd : CorePacket (mt = COMMAND, oid = DEVICE_RESET) {
     reset_config: ResetConfig,
 }
 
-test DeviceResetCmd {
-    "\x20\x00\x00\x01\x00",
+test CoreDeviceResetCmd {
+    "\x20\x00\x00\x01\x00\x00\x00\x00",
 }
 
-packet DeviceResetRsp : CoreResponse (opcode = 0x0) { //CORE_DEVICE_RESET
-    status: StatusCode,
+packet CoreDeviceResetRsp : CorePacket (mt = RESPONSE, oid = DEVICE_RESET) {
+    status: Status,
 }
 
-test DeviceResetRsp {
-    "\x40\x00\x00\x01\x00",
+test CoreDeviceResetRsp {
+    "\x40\x00\x00\x01\x00\x00\x00\x00",
 }
 
-packet DeviceStatusNtf : CoreNotification (opcode = 0x1) { //CORE_DEVICE_STATUS_NTF
+packet CoreDeviceStatusNtf : CorePacket (mt = NOTIFICATION, oid = DEVICE_STATUS) {
     device_state: DeviceState,
 }
 
-test DeviceStatusNtf {
-    "\x60\x01\x00\x01\x01",
+test CoreDeviceStatusNtf {
+    "\x60\x01\x00\x01\x00\x00\x00\x01",
 }
 
-packet GetDeviceInfoCmd : CoreCommand (opcode = 0x2) { //CORE_GET_DEVICE_INFO
+packet CoreGetDeviceInfoCmd : CorePacket (mt = COMMAND, oid = GET_DEVICE_INFO) {
 }
 
-test GetDeviceInfoCmd {
-    "\x20\x02\x00\x00",
+test CoreGetDeviceInfoCmd {
+    "\x20\x02\x00\x00\x00\x00\x00",
 }
 
-packet GetDeviceInfoRsp : CoreResponse (opcode = 0x2) { //CORE_GET_DEVICE_INFO
-    status: StatusCode,
+packet CoreGetDeviceInfoRsp : CorePacket (mt = RESPONSE, oid = GET_DEVICE_INFO) {
+    status: Status,
     uci_version: 16,
     mac_version: 16,
     phy_version: 16,
@@ -404,15 +741,15 @@ packet GetDeviceInfoRsp : CoreResponse (opcode = 0x2) { //CORE_GET_DEVICE_INFO
     vendor_spec_info: 8[],
 }
 
-test GetDeviceInfoRsp {
-    "\x40\x02\x00\x0b\x01\x01\x00\x02\x00\x03\x00\x04\x00\x01\x0a",
+test CoreGetDeviceInfoRsp {
+    "\x40\x02\x00\x0b\x00\x00\x00\x01\x01\x00\x02\x00\x03\x00\x04\x00\x01\x0a",
 }
 
-packet GetCapsInfoCmd : CoreCommand (opcode = 0x3) { //CORE_GET_CAPS_INFO
+packet CoreGetCapsInfoCmd : CorePacket (mt = COMMAND, oid = GET_CAPS_INFO) {
 }
 
-test GetCapsInfoCmd {
-    "\x20\x03\x00\x00",
+test CoreGetCapsInfoCmd {
+    "\x20\x03\x00\x00\x00\x00\x00",
 }
 
 struct CapTlv {
@@ -422,260 +759,396 @@ struct CapTlv {
 }
 
 
-packet GetCapsInfoRsp : CoreResponse (opcode = 0x3) { //CORE_GET_CAPS_INFO
-    status: StatusCode,
+packet CoreGetCapsInfoRsp : CorePacket (mt = RESPONSE, oid = GET_CAPS_INFO) {
+    status: Status,
     _count_(tlvs): 8,
     tlvs: CapTlv[],
 }
 
-test GetCapsInfoRsp {
-    "\x40\x03\x00\x05\x00\x01\x00\x01\x01",
+test CoreGetCapsInfoRsp {
+    "\x40\x03\x00\x05\x00\x00\x00\x00\x01\x00\x01\x01",
 }
 
-struct DeviceParameter {
-    id: 8,
-    _count_(value): 8,
+// [UCI] Table 44: Device Configuration Parameters
+enum ConfigParameterId : 8 {
+    DEVICE_STATE = 0x00,
+    LOW_POWER_MODE = 0x01,
+    RFU = ..,
+}
+
+struct ConfigParameter {
+    id: ConfigParameterId,
+    _size_(value): 8,
     value: 8[],
 }
 
-packet SetConfigCmd : CoreCommand (opcode = 0x4) { //CORE_SET_CONFIG
+packet CoreSetConfigCmd : CorePacket (mt = COMMAND, oid = SET_CONFIG) {
     _count_(parameters): 8,
-    parameters: DeviceParameter[],
+    parameters: ConfigParameter[],
 }
 
-test SetConfigCmd {
-    "\x20\x04\x00\x03\x01\x01\x00",
+test CoreSetConfigCmd {
+    "\x20\x04\x00\x03\x00\x00\x00\x01\x01\x00",
 }
 
-struct DeviceConfigStatus {
-    parameter_id: 8,
-    status: StatusCode,
+struct ConfigParameterStatus {
+    id: ConfigParameterId,
+    status: Status,
 }
 
-packet SetConfigRsp : CoreResponse (opcode = 0x4) { //CORE_SET_CONFIG
-    status: StatusCode,
+packet CoreSetConfigRsp : CorePacket (mt = RESPONSE, oid = SET_CONFIG) {
+    status: Status,
     _count_(parameters): 8,
-    parameters: DeviceConfigStatus[],
+    parameters: ConfigParameterStatus[],
 }
 
-test SetConfigRsp {
-    "\x40\x04\x00\x04\x01\x01\x01\x01",
+test CoreSetConfigRsp {
+    "\x40\x04\x00\x04\x00\x00\x00\x01\x01\x01\x01",
+    "\x40\x04\x00\x04\x00\x00\x00\x01\x01\x01\x0B",
 }
 
-packet GetConfigCmd : CoreCommand (opcode = 0x5) { //CORE_GET_CONFIG
+packet CoreGetConfigCmd : CorePacket (mt = COMMAND, oid = GET_CONFIG) {
     _count_(parameter_ids): 8,
-    parameter_ids: 8[],
+    parameter_ids: ConfigParameterId[],
 }
 
-test GetConfigCmd {
-    "\x20\x05\x00\x02\x01\x01",
+test CoreGetConfigCmd {
+    "\x20\x05\x00\x02\x00\x00\x00\x01\x01",
 }
 
-packet GetConfigRsp : CoreResponse (opcode = 0x5) { //CORE_GET_CONFIG
-    status: StatusCode,
+packet CoreGetConfigRsp : CorePacket (mt = RESPONSE, oid = GET_CONFIG) {
+    status: Status,
     _count_(parameters): 8,
-    parameters: DeviceParameter[]
+    parameters: ConfigParameter[]
 }
 
-test GetConfigRsp {
-    "\x40\x05\x00\x05\x01\x01\x00\x01\x01",
+test CoreGetConfigRsp {
+    "\x40\x05\x00\x05\x00\x00\x00\x01\x01\x00\x01\x01",
 }
 
-packet GenericError : CoreNotification (opcode = 0x7) { //CORE_GENERIC_ERROR_NTF
-    status: StatusCode,
+packet CoreGenericErrorNtf : CorePacket (mt = NOTIFICATION, oid = GENERIC_ERROR) {
+    status: Status,
 }
 
-test GenericError {
-    "\x60\x07\x00\x01\x01",
+test CoreGenericErrorNtf {
+    "\x60\x07\x00\x01\x00\x00\x00\x01",
 }
 
-packet SessionInitCmd : SessionCommand (opcode = 0x0) { //SESSION_INIT
+
+packet CoreQueryTimeStampCmd : CorePacket (mt = COMMAND, oid = QUERY_UWBS_TIMESTAMP) {
+}
+
+test CoreQueryTimeStampCmd {
+    "\x20\x08\x00\\x00",
+}
+
+packet CoreQueryTimeStampRsp : CorePacket (mt = RESPONSE, oid = QUERY_UWBS_TIMESTAMP) {
+    status: Status,
+    timeStamp: 64,
+}
+
+test CoreQueryTimeStampRsp {
+    "\x40\x08\x00\x09\x00\x00\x00\x01\x01\x00\x01\x01\x01",
+}
+
+// ---------------------- Session Config group ------------------------------ //
+
+packet SessionInitCmd : SessionConfigPacket (mt = COMMAND, oid = INIT) {
     session_id: 32,
     session_type: SessionType,
 }
 
 test SessionInitCmd {
-    "\x22\x00\x00\x05\x01\x02\x03\x04\x01",
+    "\x21\x00\x00\x05\x00\x00\x00\x01\x02\x03\x04\x01",
 }
 
-packet SessionInitRsp : SessionResponse (opcode = 0x0) { //SESSION_INIT
-    status: StatusCode,
+// FIRA version 2 introduces a new version of SESSION_INIT_RSP which
+// includes UWBS generated session handle.
+packet SessionInitRsp_V2 : SessionConfigPacket (mt = RESPONSE, oid = INIT) {
+    status: Status,
+    session_handle: 32,
+}
+
+test SessionInitRsp_V2 {
+    "\x41\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\x01",
+}
+
+packet SessionInitRsp : SessionConfigPacket (mt = RESPONSE, oid = INIT) {
+    status: Status,
 }
 
 test SessionInitRsp {
-    "\x41\x00\x00\x01\x11",
+    "\x41\x00\x00\x01\x00\x00\x00\x11",
 }
 
-packet SessionDeinitCmd : SessionCommand (opcode = 0x1) { //SESSION_DEINIT
-    session_id: 32,
+packet SessionDeinitCmd : SessionConfigPacket (mt = COMMAND, oid = DEINIT) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
 }
 
 test SessionDeinitCmd {
-    "\x21\x01\x00\x04\x01\x02\x03\x04",
+    "\x21\x01\x00\x04\x00\x00\x00\x01\x02\x03\x04",
 }
 
-packet SessionDeinitRsp : SessionResponse (opcode = 0x1) { //SESSION_DEINIT
-    status: StatusCode,
+packet SessionDeinitRsp : SessionConfigPacket (mt = RESPONSE, oid = DEINIT) {
+    status: Status,
 }
 
 test SessionDeinitRsp {
-    "\x41\x01\x00\x01\x00",
+    "\x41\x01\x00\x01\x00\x00\x00\x00",
 }
 
-packet SessionStatusNtf : SessionNotification (opcode = 0x2) { //SESSION_STATUS_NTF
-    session_id: 32,
+packet SessionStatusNtf : SessionConfigPacket (mt = NOTIFICATION, oid = STATUS) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
     session_state: SessionState,
-    reason_code: ReasonCode,
+    // TODO(b/272775225): Switch back to the enum type ReasonCode, once PDL supports defining a
+    // range inside an enum (for the vendor-specific space), in b/267339120.
+    reason_code: 8,
 }
 
 test SessionStatusNtf {
-    "\x61\x02\x00\x06\x01\x02\x03\x04\x02\x21",
+    "\x61\x02\x00\x06\x00\x00\x00\x01\x02\x03\x04\x02\x21",
+    "\x61\x02\x00\x06\x00\x00\x00\x01\x02\x03\x04\x01\x82", // Vendor Specific Reason Code
 }
 
-struct AppConfigParameter {
-    id: 8,
-    _count_(value): 8,
-    value: 8[],
+struct AppConfigTlv {
+    cfg_id: AppConfigTlvType,
+    _count_(v): 8,
+    v: 8[],
 }
 
-packet SessionSetAppConfigCmd : SessionCommand (opcode = 0x3) { //SESSION_SET_APP_CONFIG
-    session_id: 32,
-    _count_(parameters): 8,
-    parameters: AppConfigParameter[]
+packet SessionSetAppConfigCmd : SessionConfigPacket (mt = COMMAND, oid = SET_APP_CONFIG) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    _count_(tlvs): 8,
+    tlvs: AppConfigTlv[]
 }
 
 test SessionSetAppConfigCmd {
-    "\x21\x03\x00\x05\x01\x02\x03\x04\x00",
+    "\x21\x03\x00\x05\x00\x00\x00\x01\x02\x03\x04\x00",
 }
 
 struct AppConfigStatus {
-    config_id: 8,
-    status: StatusCode,
+    cfg_id: AppConfigTlvType,
+    status: Status,
 }
 
-packet SessionSetAppConfigRsp : SessionResponse (opcode = 0x3) { //SESSION_SET_APP_CONFIG
-    status: StatusCode,
-    _count_(parameters): 8,
-    parameters: AppConfigStatus[],
+packet SessionSetAppConfigRsp : SessionConfigPacket (mt = RESPONSE, oid = SET_APP_CONFIG) {
+    status: Status,
+    _count_(cfg_status): 8,
+    cfg_status: AppConfigStatus[],
 }
 
 test SessionSetAppConfigRsp {
-    "\x41\x03\x00\x04\x01\x01\x01\x00",
+    "\x41\x03\x00\x04\x00\x00\x00\x01\x01\x01\x00",
 }
 
-packet SessionGetAppConfigCmd : SessionCommand (opcode = 0x4) { //SESSION_GET_APP_CONFIG
-    session_id: 32,
-    _count_(parameters): 8,
-    parameters: 8[],
+packet SessionGetAppConfigCmd : SessionConfigPacket (mt = COMMAND, oid = GET_APP_CONFIG) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    _count_(app_cfg): 8,
+    app_cfg: AppConfigTlvType[],
 }
 
 test SessionGetAppConfigCmd {
-    "\x21\x04\x00\x05\x01\x02\x03\x04\x00",
+    "\x21\x04\x00\x05\x00\x00\x00\x01\x02\x03\x04\x00",
 }
 
-packet SessionGetAppConfigRsp : SessionResponse (opcode = 0x4) { //SESSION_GET_APP_CONFIG
-    status: StatusCode,
-    _count_(parameters): 8,
-    parameters: AppConfigParameter[],
+packet SessionGetAppConfigRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_APP_CONFIG) {
+    status: Status,
+    _count_(tlvs): 8,
+    tlvs: AppConfigTlv[],
 }
 
 test SessionGetAppConfigRsp {
-    "\x41\x04\x00\x02\x01\x00",
+    "\x41\x04\x00\x02\x00\x00\x00\x01\x00",
 }
 
-packet SessionGetCountCmd : SessionCommand (opcode = 0x5) { //SESSION_GET_COUNT
+packet SessionGetCountCmd : SessionConfigPacket (mt = COMMAND, oid = GET_COUNT) {
 }
 
 test SessionGetCountCmd {
-    "\x21\x05\x00\x00",
+    "\x21\x05\x00\x00\x00\x00\x00",
 }
 
-packet SessionGetCountRsp : SessionResponse (opcode = 0x5) { //SESSION_GET_COUNT
-    status: StatusCode,
+packet SessionGetCountRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_COUNT) {
+    status: Status,
     session_count: 8,
 }
 
 test SessionGetCountRsp {
-    "\x41\x05\x00\x02\x00\x01",
+    "\x41\x05\x00\x02\x00\x00\x00\x00\x01",
 }
 
-packet SessionGetStateCmd : SessionCommand (opcode = 0x6) { //SESSION_GET_STATE
-    session_id: 32,
+packet SessionGetStateCmd : SessionConfigPacket (mt = COMMAND, oid = GET_STATE) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
 }
 
 test SessionGetStateCmd {
-    "\x21\x06\x00\x04\x00\x01\x02\x03",
+    "\x21\x06\x00\x04\x00\x00\x00\x00\x01\x02\x03",
 }
 
-packet SessionGetStateRsp : SessionResponse (opcode = 0x6) { //SESSION_GET_STATE
-    status: StatusCode,
+packet SessionGetStateRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_STATE) {
+    status: Status,
     session_state: SessionState,
 }
 
 test SessionGetStateRsp {
-    "\x41\x06\x00\x02\x00\x01",
+    "\x41\x06\x00\x02\x00\x00\x00\x00\x01",
+}
+
+packet SessionUpdateDtAnchorRangingRoundsCmd : SessionConfigPacket (mt = COMMAND, oid = UPDATE_DT_ANCHOR_RANGING_ROUNDS) {
+    // TODO
+}
+
+packet SessionUpdateDtAnchorRangingRoundsRsp : SessionConfigPacket (mt = RESPONSE, oid = UPDATE_DT_ANCHOR_RANGING_ROUNDS) {
+    // TODO
+}
+
+packet SessionUpdateDtTagRangingRoundsCmd : SessionConfigPacket (mt = COMMAND, oid = UPDATE_DT_TAG_RANGING_ROUNDS) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    _count_(ranging_round_indexes): 8,
+    ranging_round_indexes: 8[],
+}
+
+test SessionUpdateDtTagRangingRoundsCmd {
+    "\x21\x09\x00\x0a\x00\x00\x00\x03\x03\x0f\x0c\x05\x08\x00\x00\x00\x00",
+}
+
+packet SessionUpdateDtTagRangingRoundsRsp : SessionConfigPacket (mt = RESPONSE, oid = UPDATE_DT_TAG_RANGING_ROUNDS) {
+    status: Status,
+    _count_(ranging_round_indexes): 8,
+    ranging_round_indexes: 8[],
+}
+
+test SessionUpdateDtTagRangingRoundsRsp {
+    "\x41\x09\x00\x03\x00\x00\x00\x01\x01\x01",
 }
 
 struct Controlee {
-    short_address: 16,
+    short_address: 8[2],
     subsession_id: 32,
 }
 
-packet SessionUpdateControllerMulticastListCmd : SessionCommand (opcode = 0x7) { //SESSION_UPDATE_CONTROLLER_MULTICAST_LIST
-    session_id: 32,
-    action: 8,
+struct Controlee_V2_0_16_Byte_Version {
+    short_address: 8[2],
+    subsession_id: 32,
+    subsession_key: 8[16],
+}
+
+struct Controlee_V2_0_32_Byte_Version {
+    short_address: 8[2],
+    subsession_id: 32,
+    subsession_key: 8[32],
+}
+
+/// cf. [UCI] 7.7
+enum UpdateMulticastListAction: 8 {
+    ADD_CONTROLEE = 0x00,
+    REMOVE_CONTROLEE = 0x01,
+    ADD_CONTROLEE_WITH_SHORT_SUB_SESSION_KEY = 0x02,
+    ADD_CONTROLEE_WITH_EXTENDED_SUB_SESSION_KEY = 0x03,
+}
+
+packet SessionUpdateControllerMulticastListCmd : SessionConfigPacket (mt = COMMAND, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    action: UpdateMulticastListAction,
+    _payload_,
+}
+
+struct SessionUpdateControllerMulticastListCmdPayload {
     _count_(controlees): 8,
     controlees: Controlee[],
 }
 
-test SessionUpdateControllerMulticastListCmd {
-    "\x21\x07\x00\x06\x00\x01\x02\x03\x04\x00",
+struct SessionUpdateControllerMulticastListCmd_2_0_16_Byte_Payload {
+    _count_(controlees): 8,
+    controlees: Controlee_V2_0_16_Byte_Version[],
 }
 
-packet SessionUpdateControllerMulticastListRsp : SessionResponse (opcode = 0x7) { //SESSION_UPDATE_CONTROLLER_MULTICAST_LIST
-    status: StatusCode,
+struct SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload {
+    _count_(controlees): 8,
+    controlees: Controlee_V2_0_32_Byte_Version[],
+}
+
+packet SessionUpdateControllerMulticastListRsp : SessionConfigPacket (mt = RESPONSE, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
+    status: Status,
 }
 
 test SessionUpdateControllerMulticastListRsp {
-    "\x41\x07\x00\x01\x00",
+    "\x41\x07\x00\x01\x00\x00\x00\x00",
 }
 
 struct ControleeStatus {
-    mac_address: 16,
-    subsession_id: 32,
-    status: 8,
+    mac_address: 8[2],
+    status: MulticastUpdateStatus,
 }
 
-packet SessionUpdateControllerMulticastListNtf : SessionNotification (opcode = 0x7) { //SESSION_UPDATE_CONTROLLER_MULTICAST_LIST
-    session_id: 32,
-    remaining_multicast_list_size: 8,
+packet SessionUpdateControllerMulticastListNtf : SessionConfigPacket (mt = NOTIFICATION, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
     _count_(controlee_status): 8,
     controlee_status: ControleeStatus[],
 }
 
 test SessionUpdateControllerMulticastListNtf {
-    "\x61\x07\x00\x06\x00\x01\x02\x03\x04\x00",
+    "\x61\x07\x00\x06\x00\x00\x00\x00\x01\x02\x03\x04\x00",
 }
 
+// ---------------------- Session Control group ----------------------------- //
 
-packet RangeStartCmd : RangingCommand (opcode = 0x0) { //RANGE_START
+packet SessionDataCreditNtf : SessionControlPacket (mt = NOTIFICATION, oid = DATA_CREDIT) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    credit_availability: CreditAvailability,
 }
 
-test RangeStartCmd {
-    "\x22\x00\x00\x04\x00\x01\x02\x03",
+test SessionDataCreditNtf {
+    "\x62\x04\x00\x05\x00\x00\x00\x00\x00\x00\x01\x01",
 }
 
-packet RangeStartRsp : RangingResponse (opcode = 0x0) { //RANGE_START
-    status: StatusCode,
+packet SessionDataTransferStatusNtf : SessionControlPacket (mt = NOTIFICATION, oid = DATA_TRANSFER_STATUS) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    uci_sequence_number: 8,
+    status: DataTransferNtfStatusCode,
+    tx_count: 8,
 }
 
-test RangeStartRsp {
-    "\x42\x00\x00\x01\x00",
+test SessionDataTransferStatusNtf {
+    "\x62\x05\x00\x06\x00\x00\x00\x00\x00\x00\x01\x01\x00\x00",
+}
+
+packet SessionQueryMaxDataSizeInRangingCmd : SessionConfigPacket (mt = COMMAND, oid = QUERY_DATA_SIZE_IN_RANGING) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+}
+
+test SessionQueryMaxDataSizeInRangingCmd {
+ "\x21\x0B\x00\x04\x00\x00\x00\x00",
+}
+
+packet SessionQueryMaxDataSizeInRangingRsp : SessionConfigPacket (mt = RESPONSE, oid = QUERY_DATA_SIZE_IN_RANGING) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    max_data_size: 16,
+}
+
+test SessionQueryMaxDataSizeInRangingRsp {
+  "\x41\x0B\x00\x06\x00\x00\x00\x00\x0E7\0x07",
+}
+
+packet SessionStartCmd : SessionControlPacket (mt = COMMAND, oid = START) {
+    session_id: 32,
+}
+
+test SessionStartCmd {
+    "\x22\x00\x00\x04\x00\x00\x00\x00\x01\x02\x03",
+}
+
+packet SessionStartRsp : SessionControlPacket (mt = RESPONSE, oid = START) {
+    status: Status,
+}
+
+test SessionStartRsp {
+    "\x42\x00\x00\x01\x00\x00\x00\x00",
 }
 
 struct ShortAddressTwoWayRangingMeasurement {
     mac_address: 16,
-    status: StatusCode,
+    status: Status,
     nlos: 8,
     distance: 16,
     aoa_azimuth: 16,
@@ -687,12 +1160,17 @@ struct ShortAddressTwoWayRangingMeasurement {
     aoa_destination_elevation: 16,
     aoa_destination_elevation_fom: 8,
     slot_index: 8,
-    _reserved_: 96,
+    rssi: 8,
+    // b/272301550: The pdl compiler cannot handle individual fields
+    // larger than 64 bit. The work around is to split the 88 bit
+    // field into two.
+    _reserved_: 64,
+    _reserved_: 24,
 }
 
 struct ExtendedAddressTwoWayRangingMeasurement {
     mac_address: 64,
-    status: StatusCode,
+    status: Status,
     nlos: 8,
     distance: 16,
     aoa_azimuth: 16,
@@ -704,17 +1182,44 @@ struct ExtendedAddressTwoWayRangingMeasurement {
     aoa_destination_elevation: 16,
     aoa_destination_elevation_fom: 8,
     slot_index: 8,
-    _reserved_: 48,
+    rssi: 8,
+    _reserved_: 40,
+}
+
+struct ShortAddressOwrAoaRangingMeasurement {
+    mac_address: 16,
+    status: Status,
+    nlos: 8,
+    frame_sequence_number: 8,
+    block_index: 16,
+    aoa_azimuth: 16,
+    aoa_azimuth_fom: 8,
+    aoa_elevation: 16,
+    aoa_elevation_fom: 8,
+}
+
+struct ExtendedAddressOwrAoaRangingMeasurement {
+    mac_address: 64,
+    status: Status,
+    nlos: 8,
+    frame_sequence_number: 8,
+    block_index: 16,
+    aoa_azimuth: 16,
+    aoa_azimuth_fom: 8,
+    aoa_elevation: 16,
+    aoa_elevation_fom: 8,
 }
 
 enum RangingMeasurementType : 8 {
     ONE_WAY = 0x0,
     TWO_WAY = 0x1,
+    DL_TDOA = 0x02,
+    OWR_AOA = 0x03,
 }
 
-packet RangeDataNtf : RangingNotification (opcode = 0x0) { //RANGE_START
+packet SessionInfoNtf : SessionControlPacket (mt = NOTIFICATION, oid = START) {
     sequence_number: 32,
-    session_id: 32,
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
     rcr_indicator: 8,
     current_ranging_interval: 32,
     ranging_measurement_type: RangingMeasurementType,
@@ -724,148 +1229,217 @@ packet RangeDataNtf : RangingNotification (opcode = 0x0) { //RANGE_START
     _body_,
 }
 
-packet ShortMacTwoWayRangeDataNtf : RangeDataNtf (ranging_measurement_type = TWO_WAY, mac_address_indicator = SHORT_ADDRESS) {
+packet ShortMacTwoWaySessionInfoNtf : SessionInfoNtf (ranging_measurement_type = TWO_WAY, mac_address_indicator = SHORT_ADDRESS) {
     _count_(two_way_ranging_measurements) : 8,
     two_way_ranging_measurements : ShortAddressTwoWayRangingMeasurement[],
+    vendor_data: 8[],
 }
 
-test ShortMacTwoWayRangeDataNtf {
-    "\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+test ShortMacTwoWaySessionInfoNtf {
+    "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
-packet ExtendedMacTwoWayRangeDataNtf : RangeDataNtf (ranging_measurement_type = TWO_WAY, mac_address_indicator = EXTENDED_ADDRESS) {
+packet ExtendedMacTwoWaySessionInfoNtf : SessionInfoNtf (ranging_measurement_type = TWO_WAY, mac_address_indicator = EXTENDED_ADDRESS) {
     _count_(two_way_ranging_measurements) : 8,
     two_way_ranging_measurements : ExtendedAddressTwoWayRangingMeasurement[],
+    vendor_data: 8[],
 }
 
-test ExtendedMacTwoWayRangeDataNtf {
-    "\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+test ExtendedMacTwoWaySessionInfoNtf {
+    "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
-packet RangeStopCmd : RangingCommand (opcode = 0x1) { //RANGE_STOP
+packet ShortMacDlTDoASessionInfoNtf : SessionInfoNtf (ranging_measurement_type = DL_TDOA, mac_address_indicator = SHORT_ADDRESS) {
+    no_of_ranging_measurements : 8,
+    dl_tdoa_measurements : 8[],
 }
 
-test RangeStopCmd {
-    "\x22\x01\x00\x04\x00\x02\x03\x04",
+test ShortMacDlTDoASessionInfoNtf {
+     "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x02\x01\x01\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
-packet RangeStopRsp : RangingResponse (opcode = 0x1) { //RANGE_STOP
-    status: StatusCode,
+packet ExtendedMacDlTDoASessionInfoNtf : SessionInfoNtf (ranging_measurement_type = DL_TDOA, mac_address_indicator = EXTENDED_ADDRESS) {
+    no_of_ranging_measurements : 8,
+    dl_tdoa_measurements : 8[],
 }
 
-test RangeStopRsp {
-    "\x42\x01\x00\x01\x00",
+test ExtendedMacDlTDoASessionInfoNtf {
+     "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x02\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
-packet RangeGetRangingCountCmd : RangingCommand (opcode = 0x3) { //RANGE_GET_RANGING_COUNT
+packet ShortMacOwrAoaSessionInfoNtf : SessionInfoNtf (ranging_measurement_type = OWR_AOA, mac_address_indicator = SHORT_ADDRESS) {
+    _count_(owr_aoa_ranging_measurements) : 8,
+    owr_aoa_ranging_measurements : ShortAddressOwrAoaRangingMeasurement[],
+    vendor_data: 8[],
 }
 
-test RangeGetRangingCountCmd {
-    "\x22\x03\x00\x04\x00\x02\x03\x04",
+test ShortMacOwrAoaSessionInfoNtf {
+    "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    "\x62\x00\x00\x26\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xaa\xbb\x00\x00\x01\x01\x00\x03\x04\x60\x05\x06\x50",
 }
 
-packet RangeGetRangingCountRsp : RangingResponse (opcode = 0x3) { //RANGE_GET_RANGING_COUNT
-    status: StatusCode,
+packet ExtendedMacOwrAoaSessionInfoNtf : SessionInfoNtf (ranging_measurement_type = OWR_AOA, mac_address_indicator = EXTENDED_ADDRESS) {
+    _count_(owr_aoa_ranging_measurements) : 8,
+    owr_aoa_ranging_measurements : ExtendedAddressOwrAoaRangingMeasurement[],
+    vendor_data: 8[],
+}
+
+test ExtendedMacOwrAoaSessionInfoNtf {
+    "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    "\x62\x00\x00\x2c\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\xaa\xbb\xcc\xdd\x01\x02\x03\x04\x00\x00\x01\x01\x00\x03\x04\x60\x05\x06\x50",
+}
+
+packet SessionStopCmd : SessionControlPacket (mt = COMMAND, oid = STOP) {
+    session_id: 32,
+}
+
+test SessionStopCmd {
+    "\x22\x01\x00\x04\x00\x00\x00\x00\x02\x03\x04",
+}
+
+packet SessionStopRsp : SessionControlPacket (mt = RESPONSE, oid = STOP) {
+    status: Status,
+}
+
+test SessionStopRsp {
+    "\x42\x01\x00\x01\x00\x00\x00\x00",
+}
+
+packet SessionGetRangingCountCmd : SessionControlPacket (mt = COMMAND, oid = GET_RANGING_COUNT) {
+    session_id: 32,
+}
+
+test SessionGetRangingCountCmd {
+    "\x22\x03\x00\x04\x00\x00\x00\x00\x02\x03\x04",
+}
+
+packet SessionGetRangingCountRsp : SessionControlPacket (mt = RESPONSE, oid = GET_RANGING_COUNT) {
+    status: Status,
     count: 32,
 }
 
-test RangeGetRangingCountRsp {
-    "\x42\x03\x00\x05\x00\x02\x03\x04\x05",
+test SessionGetRangingCountRsp {
+    "\x42\x03\x00\x05\x00\x00\x00\x00\x02\x03\x04\x05",
 }
 
-struct PicaPosition {
-    x: 16,
-    y: 16,
-    z: 16,
-    yaw: 16,
-    pitch: 8,
-    roll: 16,
-}
+// -------------------------- Android group --------------------------------- //
 
-packet AndroidGetPowerStatsCmd: AndroidCommand (opcode = 0x0) { //ANDROID_GET_POWER_STATS
+packet AndroidGetPowerStatsCmd : AndroidPacket (mt = COMMAND, oid = GET_POWER_STATS) {
 }
 
 test AndroidGetPowerStatsCmd {
-    "\x2e\x00\x00\x00",
+    "\x2c\x00\x00\x00\x00\x00\x00",
 }
 
 struct PowerStats {
-    status: StatusCode,
+    status: Status,
     idle_time_ms: 32,
     tx_time_ms: 32,
     rx_time_ms: 32,
     total_wake_count:32,
 }
 
-packet AndroidGetPowerStatsRsp : AndroidResponse (opcode = 0x0) { //ANDROID_GET_POWER_STATS
+packet AndroidGetPowerStatsRsp : AndroidPacket (mt = RESPONSE, oid = GET_POWER_STATS) {
     stats: PowerStats,
 }
 
 test AndroidGetPowerStatsRsp {
-    "\x4e\x00\x00\x11\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    "\x4c\x00\x00\x11\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
-packet AndroidSetCountryCodeCmd: AndroidCommand (opcode = 0x1) { //ANDROID_SET_COUNTRY_CODE
+packet AndroidSetCountryCodeCmd: AndroidPacket (mt = COMMAND, oid = SET_COUNTRY_CODE) {
     country_code : 8[2],
 }
 
 // Set country code to US.
 test AndroidSetCountryCodeCmd {
-    "\x2e\x01\x00\x02\x55\x53",
+    "\x2c\x01\x00\x02\x00\x00\x00\x55\x53",
 }
 
-packet AndroidSetCountryCodeRsp : AndroidResponse (opcode = 0x1) { //ANDROID_SET_COUNTRY_CODE
-    status: StatusCode,
+packet AndroidSetCountryCodeRsp : AndroidPacket (mt = RESPONSE, oid = SET_COUNTRY_CODE) {
+    status: Status,
 }
 
 test AndroidSetCountryCodeRsp {
-    "\x4e\x01\x00\x01\x00",
+    "\x4c\x01\x00\x01\x00\x00\x00\x00",
 }
 
-packet UciVendor_A_Command : UciCommand (group_id = VENDOR_RESERVED_A) {
-    _payload_,
+enum FrameReportTlvType : 8 {
+    RSSI = 0x0,
+    AOA = 0x1,
+    CIR = 0x2,
 }
 
-packet UciVendor_B_Command : UciCommand (group_id = VENDOR_RESERVED_B) {
-    _payload_,
+struct FrameReportTlv {
+    t: FrameReportTlvType,
+    _size_(v): 16,
+    v: 8[],
 }
 
-packet UciVendor_E_Command : UciCommand (group_id = VENDOR_RESERVED_E) {
-    _payload_,
+packet FrameReportTlvPacket {
+    t: FrameReportTlvType,
+    _size_(_body_): 16,
+    _body_,
 }
 
-packet UciVendor_F_Command :  UciCommand (group_id = VENDOR_RESERVED_F) {
-    _payload_,
+packet Rssi : FrameReportTlvPacket (t = RSSI) {
+    rssi: 8[],
 }
 
-packet UciVendor_A_Response : UciResponse (group_id = VENDOR_RESERVED_A) {
-    _payload_,
+struct AoaMeasurement {
+    tdoa: 16,
+    pdoa: 16,
+    aoa: 16,
+    fom: 8,
+    t: 8,
 }
 
-packet UciVendor_B_Response : UciResponse (group_id = VENDOR_RESERVED_B) {
-    _payload_,
+packet Aoa : FrameReportTlvPacket (t = AOA) {
+    aoa: AoaMeasurement[],
 }
 
-packet UciVendor_E_Response : UciResponse (group_id = VENDOR_RESERVED_E) {
-    _payload_,
+test Aoa {
+    "\x01\x08\x00\x00\x01\x00\x01\x00\x01\x01\x01",
 }
 
-packet UciVendor_F_Response : UciResponse (group_id = VENDOR_RESERVED_F) {
-    _payload_,
+struct CirValue {
+    first_path_index : 16,
+    first_path_snr: 16,
+    first_path_ns: 16,
+    peak_path_index: 16,
+    peak_path_snr: 16,
+    peak_path_ns: 16,
+    first_path_sample_offset: 8,
+    samples_number: 8,
+    _size_(sample_window): 16,
+    sample_window: 8[],
 }
 
-packet UciVendor_A_Notification : UciNotification (group_id = VENDOR_RESERVED_A) {
-    _payload_,
+packet Cir : FrameReportTlvPacket (t = CIR) {
+    _count_(cir_value): 8,
+    cir_value: CirValue[],
 }
 
-packet UciVendor_B_Notification : UciNotification (group_id = VENDOR_RESERVED_B) {
-    _payload_,
+test Cir {
+    "\x02\x15\x00\x01\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x00\x02\x04\x00\x01\x02\x03\x04",
 }
 
-packet UciVendor_E_Notification : UciNotification (group_id = VENDOR_RESERVED_E) {
-    _payload_,
+struct FrameReport {
+    uwb_msg_id: 8,
+    action: 8,
+    antenna_set: 8,
+    _count_(frame_report_tlvs): 8,
+    frame_report_tlvs: FrameReportTlv[],
 }
 
-packet UciVendor_F_Notification : UciNotification (group_id = VENDOR_RESERVED_F) {
-    _payload_,
+packet AndroidRangeDiagnosticsNtf : AndroidPacket (mt = NOTIFICATION, oid = FIRA_RANGE_DIAGNOSTICS) {
+    session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    sequence_number: 32,
+    _count_(frame_reports): 8,
+    frame_reports: FrameReport[],
+}
+
+test AndroidRangeDiagnosticsNtf {
+    "\x6c\x02\x00\x11\x00\x00\x00\x01\x01\x01\x01\x02\x02\x02\x02\x01\x00\x01\x02\x01\x00\x01\x00\x00",
+    "\x6c\x02\x00\x34\x00\x00\x00\x01\x01\x01\x01\x02\x02\x02\x02\x01\x00\x01\x02\x03\x01\x08\x00\x01\x02\x01\x02\x01\x02\x01\x01\x02\x15\x00\x01\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x00\x02\x04\x00\x01\x02\x03\x04\x00\x01\x00\x00",
 }
