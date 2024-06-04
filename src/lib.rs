@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use anyhow::Result;
+use pdl_runtime::Packet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -62,7 +63,9 @@ pub trait RangingEstimator: Send + Sync {
     /// identified by their respective handle. The result is a triplet
     /// containing the range, azimuth, and elevation of the right device
     /// relative to the left device.
-    fn estimate(&self, left: &Handle, right: &Handle) -> Result<RangingMeasurement>;
+    /// Return `None` if the measurement could not be estimated, e.g. because
+    /// the devices are out of range.
+    fn estimate(&self, left: &Handle, right: &Handle) -> Option<RangingMeasurement>;
 }
 
 /// Pica emulation environment.
@@ -413,14 +416,18 @@ impl Pica {
         // Look for compatible anchors.
         for mac_address in session.get_dst_mac_address() {
             if let Some(other) = self.anchors.get(mac_address) {
-                let local = self
+                let Some(local) = self
                     .ranging_estimator
                     .estimate(&device.handle, &other.handle)
-                    .unwrap_or(Default::default());
-                let remote = self
+                else {
+                    continue;
+                };
+                let Some(remote) = self
                     .ranging_estimator
                     .estimate(&other.handle, &device.handle)
-                    .unwrap_or(Default::default());
+                else {
+                    continue;
+                };
                 measurements.push(make_measurement(mac_address, local, remote));
             }
         }
@@ -471,7 +478,8 @@ impl Pica {
                         status: uci::Status::Ok,
                     }
                     .build()
-                    .into(),
+                    .encode_to_vec()
+                    .unwrap(),
                 )
                 .unwrap();
         }
@@ -489,7 +497,8 @@ impl Pica {
                         vendor_data: vec![],
                     }
                     .build()
-                    .into(),
+                    .encode_to_vec()
+                    .unwrap(),
                 )
                 .unwrap();
 
