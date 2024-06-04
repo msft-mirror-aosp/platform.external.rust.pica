@@ -12,7 +12,7 @@ third_party {
     type: GIT
     value: "https://github.com/google/pica.git"
   }
-  version: "v0.1.10"
+  version: "v0.1.11"
   license_type: NOTICE
-  last_upgrade_date { year: 2024 month: 5 day: 22 }
+  last_upgrade_date { year: 2024 month: 6 day: 3 }
 }
