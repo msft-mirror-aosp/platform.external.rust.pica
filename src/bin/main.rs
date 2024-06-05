@@ -12,35 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate bytes;
-extern crate num_derive;
-extern crate num_traits;
-extern crate thiserror;
-
-#[cfg(feature = "web")]
-mod web;
-
 use anyhow::Result;
 use clap::Parser;
+use env_logger::Env;
 use pica::{Pica, PicaCommand};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tokio::try_join;
 
 const DEFAULT_UCI_PORT: u16 = 7000;
-const DEFAULT_WEB_PORT: u16 = 3000;
 
-async fn accept_incoming(tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<()> {
+async fn accept_incoming(cmd_tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<()> {
     let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
     let uci_listener = TcpListener::bind(uci_socket).await?;
-    println!("Pica: Listening on: {}", uci_port);
+    log::info!("Pica: Listening on: {}", uci_port);
 
     loop {
         let (socket, addr) = uci_listener.accept().await?;
-        println!("Uwb host addr: {}", addr);
-        tx.send(PicaCommand::Connect(socket)).await?
+        log::info!("Uwb host addr: {}", addr);
+
+        let (read_half, write_half) = socket.into_split();
+        let stream = Box::pin(futures::stream::unfold(read_half, pica::packets::uci::read));
+        let sink = Box::pin(futures::sink::unfold(write_half, pica::packets::uci::write));
+
+        cmd_tx
+            .send(PicaCommand::Connect(stream, sink))
+            .await
+            .map_err(|_| anyhow::anyhow!("pica command stream closed"))?
     }
 }
 
@@ -55,32 +55,33 @@ struct Args {
     /// Configure the TCP port for the UCI server.
     #[arg(short, long, value_name = "UCI_PORT", default_value_t = DEFAULT_UCI_PORT)]
     uci_port: u16,
-    /// Configure the HTTP port for the web interface.
-    #[arg(short, long, value_name = "WEB_PORT", default_value_t = DEFAULT_WEB_PORT)]
-    web_port: u16,
+}
+
+struct MockRangingEstimator();
+
+/// The position cannot be communicated to the pica environment when
+/// using the default binary (HTTP interface not available).
+/// Thus the ranging estimator cannot produce any result.
+impl pica::RangingEstimator for MockRangingEstimator {
+    fn estimate(
+        &self,
+        _left: &pica::Handle,
+        _right: &pica::Handle,
+    ) -> Option<pica::RangingMeasurement> {
+        Some(Default::default())
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+
     let args = Args::parse();
-    assert_ne!(
-        args.uci_port, args.web_port,
-        "UCI port and Web port shall be different."
-    );
-    let (event_tx, _) = broadcast::channel(16);
 
-    let mut pica = Pica::new(event_tx.clone(), args.pcapng_dir);
-    let pica_tx = pica.tx();
+    let pica = Pica::new(Box::new(MockRangingEstimator()), args.pcapng_dir);
+    let commands = pica.commands();
 
-    #[cfg(feature = "web")]
-    try_join!(
-        accept_incoming(pica_tx.clone(), args.uci_port),
-        pica.run(),
-        web::serve(pica_tx, event_tx, args.web_port)
-    )?;
-
-    #[cfg(not(feature = "web"))]
-    try_join!(accept_incoming(pica_tx.clone(), args.uci_port), pica.run(),)?;
+    try_join!(accept_incoming(commands.clone(), args.uci_port), pica.run(),)?;
 
     Ok(())
 }

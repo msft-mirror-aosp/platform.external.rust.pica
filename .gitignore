@@ -1,2 +1,5 @@
-__pycache__
 target/
+__pycache__
+build/
+*.egg-info/
+artifacts

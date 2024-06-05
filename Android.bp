@@ -15,17 +15,30 @@ license {
     ],
 }
 
+genrule {
+    name: "libpica_uci_packets",
+    defaults: ["pdl_rust_legacy_generator_defaults"],
+    srcs: ["src/uci_packets.pdl"],
+    out: ["uci_packets.rs"],
+}
+
 rust_library_host {
     name: "libpica",
     crate_name: "pica",
-    srcs: ["src/lib.rs"],
+    srcs: [
+        "src/lib.rs",
+        ":libpica_uci_packets",
+    ],
     proc_macros: ["libnum_derive"],
     rustlibs: [
         "libanyhow",
         "libbytes",
+        "libfutures",
         "libglam",
         "libhex",
+        "liblog_rust",
         "libnum_traits",
+        "libpdl_runtime",
         "libthiserror",
         "libserde",
         "libtokio",
@@ -34,10 +47,13 @@ rust_library_host {
 
 rust_binary_host {
     name: "pica",
-    srcs: ["src/bin/server/mod.rs"],
+    srcs: ["src/bin/main.rs"],
     proc_macros: ["libnum_derive"],
     rustlibs: [
         "libanyhow",
+        "libenv_logger",
+        "libfutures",
+        "liblog_rust",
         "libpica",
         "libclap",
         "libtokio",
