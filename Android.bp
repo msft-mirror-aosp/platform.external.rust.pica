@@ -17,7 +17,7 @@ license {
 
 genrule {
     name: "libpica_uci_packets",
-    defaults: ["pdl_rust_generator_defaults"],
+    defaults: ["pdl_rust_legacy_generator_defaults"],
     srcs: ["src/uci_packets.pdl"],
     out: ["uci_packets.rs"],
 }
