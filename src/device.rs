@@ -19,6 +19,7 @@ use crate::PicaCommand;
 use std::collections::HashMap;
 use std::time::Duration;
 
+use pdl_runtime::Packet;
 use tokio::sync::mpsc;
 use tokio::time;
 
@@ -142,8 +143,13 @@ impl Device {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             time::sleep(Duration::from_millis(5)).await;
-            tx.send(CoreDeviceStatusNtfBuilder { device_state }.build().into())
-                .unwrap()
+            tx.send(
+                CoreDeviceStatusNtfBuilder { device_state }
+                    .build()
+                    .encode_to_vec()
+                    .unwrap(),
+            )
+            .unwrap()
         });
     }
 
@@ -194,8 +200,13 @@ impl Device {
     }
 
     // Send a response or notification to the Host.
-    fn send_control(&mut self, packet: impl Into<Vec<u8>>) {
-        let _ = self.tx.send(packet.into());
+    fn send_raw_control(&mut self, packet: Vec<u8>) {
+        let _ = self.tx.send(packet);
+    }
+
+    // Send a response or notification to the Host.
+    fn send_control(&mut self, packet: impl Packet) {
+        self.send_raw_control(packet.encode_to_vec().unwrap());
     }
 
     // The fira norm specify to send a response, then reset, then
@@ -728,6 +739,31 @@ impl Device {
                         status: update_status,
                     });
                 });
+                // Following requirements are applicable when the action is set to Delete (Action field set to 0x01):
+                // When the command is received while the Session State is SESSION_STATE_ACTIVE,
+                // For requested Controlees present in the multicast list,
+                // UWBS shall send the SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF and the
+                // corresponding Controlee status shall be set to STATUS_OK_MULTICAST_LIST_UPDATE
+                // in the Status List of SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF.
+                if session.state == SessionState::SessionStateActive {
+                    let tx = self.tx.clone();
+                    tokio::spawn(async move {
+                        // Sleep for 5ms to make sure the notification is not being
+                        // sent before the response.
+                        // TODO(#84) remove the sleep.
+                        time::sleep(Duration::from_millis(5)).await;
+                        tx.send(
+                            SessionUpdateControllerMulticastListNtfBuilder {
+                                controlee_status,
+                                session_token: session_handle,
+                            }
+                            .build()
+                            .encode_to_vec()
+                            .unwrap(),
+                        )
+                        .unwrap()
+                    });
+                }
             }
         }
         session.app_config.number_of_controlees = dst_addresses.len() as u8;
@@ -741,22 +777,6 @@ impl Device {
                 ReasonCode::ErrorInvalidNumOfControlees,
             )
         }
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            // Sleep for 5ms to make sure the notification is not being
-            // sent before the response.
-            // TODO(#84) remove the sleep.
-            time::sleep(Duration::from_millis(5)).await;
-            tx.send(
-                SessionUpdateControllerMulticastListNtfBuilder {
-                    controlee_status,
-                    session_token: session_handle,
-                }
-                .build()
-                .into(),
-            )
-            .unwrap()
-        });
         SessionUpdateControllerMulticastListRspBuilder { status }.build()
     }
 
@@ -1050,7 +1070,7 @@ impl Device {
                             1,
                             status.into(),
                         ];
-                        self.send_control(response)
+                        self.send_raw_control(response)
                     }
 
                     // Parsing success, ignore non command packets.
